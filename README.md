@@ -43,8 +43,7 @@ pip install .
 > **Note on Regex Rules:** 
 > `cursed-proxy` uses `pyformlang` to compile your regex into a pure mathematical DFA.
 > * **Supported Syntax:** Standard formal regex features work perfectly. You can use `.` (any char), `*` (0 or more), `+` (1 or more), `?` (0 or 1), `|` (OR), `()` (Grouping), character classes like `[a-zA-Z]` or `\d`, and quantifiers like `a{1,3}`.
-> * **Unsupported Syntax:** Advanced non-regular extensions like lookarounds `(?=...)` or backreferences `\1` will fail to compile.
-> * **Anchors (`^` and `$`):** Don't use them! The eBPF kernel program evaluates rules starting from the very first byte of the TCP payload anyway. This means a rule like `GET /admin.*` automatically acts as a "starts-with" rule. If you want to match a string anywhere inside the payload, you must explicitly prefix it with `.*` (e.g., `.*dropme.*`).
+> The eBPF kernel program evaluates rules starting from the very first byte of the TCP payload. This means a rule like `GET /admin.*` automatically acts as a "starts-with" rule. If you want to match a string anywhere inside the payload, you must explicitly prefix it with `.*` (e.g., `.*dropme.*`).
 
 2. Run the proxy as root:
 ```bash
