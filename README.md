@@ -1,6 +1,6 @@
 # cursed-proxy
 
-A highly cursed, eBPF-based TCP payload dropping proxy meant for Attack & Defence CTF competitions (or just messing around with kernel stuff). 
+A highly cursed, eBPF-based TCP proxy meant for Attack & Defence CTF competitions (or just messing around with kernel stuff). 
 
 Instead of routing packets to userspace, `cursed-proxy` compiles your regex rules into Deterministic Finite Automata and injects them directly into the Linux kernel using eBPF maps. It reads your packets byte-by-byte at the socket layer and silently drops malicious payloads before your CTF services even know they exist.
 
