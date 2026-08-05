@@ -1,3 +1,4 @@
-from .proxy import CursedProxy, logger
+from .proxy import CursedProxy
+from .log import setup_logging
 
-__all__ = ["CursedProxy", "logger"]
+__all__ = ["CursedProxy", "setup_logging"]

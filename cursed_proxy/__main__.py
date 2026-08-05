@@ -1,33 +1,11 @@
 from cursed_proxy.proxy import CursedProxy
 import argparse
-import logging
 import time
 import os
 import sys
 
-class ColorFormatter(logging.Formatter):
-    COLORS = {
-        logging.DEBUG: "\033[94m[*]\033[0m",     # Blue [*]
-        logging.INFO: "\033[92m[+]\033[0m",      # Green [+]
-        logging.WARNING: "\033[93m[!]\033[0m",   # Yellow [!]
-        logging.ERROR: "\033[91m[-]\033[0m",     # Red [-]
-        logging.CRITICAL: "\033[1;91m[!]\033[0m" # Bold Red [!]
-    }
-
-    def format(self, record):
-        prefix = self.COLORS.get(record.levelno, "[?]")
-        log_fmt = f"\033[90m%(asctime)s\033[0m {prefix} %(message)s"
-        formatter = logging.Formatter(log_fmt, datefmt="%H:%M:%S")
-        return formatter.format(record)
-
-def setup_logging(verbose=False):
-    logger = logging.getLogger("cursed_proxy")
-    handler = logging.StreamHandler()
-    handler.setFormatter(ColorFormatter())
-    logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG if verbose else logging.INFO)
-    logger.propagate = False
-    return logger
+import logging
+from cursed_proxy.log import setup_logging
 
 def load_config(filepath):
     """Safely load and parse the config file."""

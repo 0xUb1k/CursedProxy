@@ -3,7 +3,20 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
-#define MAX_SCAN_DEPTH 4094 //please god pleasee
+#define MAX_SCAN_DEPTH 2048 //please god pleasee
+#define MAX_LOG_PAYLOAD 32
+
+struct event {
+    __u32 port;
+    __u32 match_len;
+    char matched_payload[MAX_LOG_PAYLOAD];
+};
+struct {
+    __uint(type, BPF_MAP_TYPE_RINGBUF);
+    __uint(max_entries, 256 * 1024);
+} rb SEC(".maps");
+
+
 
 /*
  * simply says "everything that arrives must pass :)"
@@ -41,8 +54,9 @@ int judge(struct __sk_buff *ctx) {
     __u64 port = ctx->local_port; 
     __u32 current_state = 1;
     int matched = 0;
+    int i;
 
-    for (int i = 0; i < MAX_SCAN_DEPTH; i++) {
+    for (i = 0; i < MAX_SCAN_DEPTH; i++) {
         if ((void *)(payload + i + 1) > data_end) {
             break; 
         }
@@ -65,7 +79,26 @@ int judge(struct __sk_buff *ctx) {
     }
 
     if (matched) {
-        bpf_printk("Regex matched! Dropping payload.\\n");
+        
+        //Loging part!
+        struct event *e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
+        if (e) {
+            e->port = ctx->local_port;
+            
+            __u32 len_to_copy = i + 1;
+            if (len_to_copy > 20) {
+                len_to_copy = 20;
+            }
+            
+            len_to_copy &= 31;
+            
+            e->match_len = len_to_copy;
+            
+            bpf_probe_read_kernel(e->matched_payload, len_to_copy, payload);
+            e->matched_payload[len_to_copy] = '\0';
+            
+            bpf_ringbuf_submit(e, 0); 
+        }
         return SK_DROP;
     }
 

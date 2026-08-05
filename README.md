@@ -13,6 +13,7 @@ Honestly? I really needed an excuse to learn how eBPF filters work, and I needed
 * [ ] Make the DFA state-machine parsing faster
 * [ ] Make DFA hash map lookup faster by using another datastructure.
 * [ ] Allow injecting custom replacement payloads instead of just dropping
+* [ ] Add more colors and better logging.
 
 ## How to use it
 

@@ -1,42 +1,12 @@
 import ctypes
 from pyformlang.regular_expression import PythonRegex
 import os
-import logging
-import sys
 import threading
-import time
-from collections import defaultdict
+
+import logging
+from cursed_proxy.log import Spinner
 logger = logging.getLogger(__name__)
 
-class Spinner:
-    def __init__(self, message="Loading..."):
-        self.message = message
-        self.running = False
-        self.thread = None
-
-    def spin(self):
-        chars = "|/-\\"
-        idx = 0
-        while self.running:
-            current_time = time.strftime("%H:%M:%S", time.localtime())
-            sys.stdout.write(f"\r\033[90m{current_time}\033[0m \033[94m[*]\033[0m {self.message} {chars[idx % len(chars)]}")
-            sys.stdout.flush()
-            idx += 1
-            time.sleep(0.1)
-            
-    def __enter__(self):
-        self.running = True
-        self.thread = threading.Thread(target=self.spin)
-        self.thread.daemon = True
-        self.thread.start()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.running = False
-        if self.thread:
-            self.thread.join()
-        sys.stdout.write("\r\033[K") # Clear the line completely without a newline
-        sys.stdout.flush()
 
 class CursedProxy:
     def __init__(self, ebpf_path=None):
@@ -52,7 +22,60 @@ class CursedProxy:
         self.ports = set()
         self.config = {}
         self.regex_keys = {}
+        self.running = False
         
+        self._configure_ctypes_signatures()
+
+    def _configure_ctypes_signatures(self):
+        # Ringbuf polling bindings
+        self.CALLBACK_TYPE = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_int, ctypes.c_void_p)
+        self.c_callback = self.CALLBACK_TYPE(self._ringbuf_callback)
+        
+        self.bpf_lib.setup_ringbuf.argtypes = [self.CALLBACK_TYPE]
+        self.bpf_lib.setup_ringbuf.restype = ctypes.c_int
+        
+        self.bpf_lib.poll_ringbuf.argtypes = [ctypes.c_int]
+        self.bpf_lib.poll_ringbuf.restype = ctypes.c_int
+        
+        self.bpf_lib.teardown_ringbuf.argtypes = []
+        self.bpf_lib.teardown_ringbuf.restype = None
+        
+        # DFA transitions
+        self.bpf_lib.add_dfa_transition.argtypes = [ctypes.c_uint64, ctypes.c_uint32]
+        self.bpf_lib.add_dfa_transition.restype = ctypes.c_int
+        
+        self.bpf_lib.remove_dfa_transition.argtypes = [ctypes.c_uint64]
+        self.bpf_lib.remove_dfa_transition.restype = ctypes.c_int
+        
+        # Ports management
+        self.bpf_lib.add_managed_port.argtypes = [ctypes.c_uint]
+        self.bpf_lib.add_managed_port.restype = ctypes.c_int
+        
+        self.bpf_lib.remove_managed_port.argtypes = [ctypes.c_uint]
+        self.bpf_lib.remove_managed_port.restype = ctypes.c_int
+        
+        # Core eBPF lifecycle
+        self.bpf_lib.load_ebpf.argtypes = []
+        self.bpf_lib.load_ebpf.restype = ctypes.c_int
+        
+        self.bpf_lib.unload_ebpf.argtypes = []
+        self.bpf_lib.unload_ebpf.restype = None
+        
+        self.bpf_lib.enable_libbpf_logging.argtypes = []
+        self.bpf_lib.enable_libbpf_logging.restype = None
+        
+        self.bpf_lib.disable_libbpf_logging.argtypes = []
+        self.bpf_lib.disable_libbpf_logging.restype = None
+
+    def _ringbuf_callback(self, port, match_len, payload_ptr):
+        raw_bytes = ctypes.string_at(payload_ptr, match_len)
+        matched_str = repr(raw_bytes) 
+        logger.warning(f"\033[91m[DROPPED]\033[0m packet on port {port}! Matched snippet: {matched_str}")
+
+    def _poll_ringbuf_loop(self):
+        while self.running:
+            self.bpf_lib.poll_ringbuf(100)
+
     def start(self, verbose=False):
         if verbose:
             self.bpf_lib.enable_libbpf_logging()
@@ -66,6 +89,14 @@ class CursedProxy:
             logger.error(f"Failed to load eBPF program, error code: {ret}")
             raise RuntimeError(f"Failed to load eBPF program, error code: {ret}. See stderr output above for details.")
         logger.info("eBPF program loaded successfully.")
+        
+        if self.bpf_lib.setup_ringbuf(self.c_callback) != 0:
+            logger.error("Failed to setup BPF ring buffer!")
+            
+        self.running = True
+        self.poll_thread = threading.Thread(target=self._poll_ringbuf_loop)
+        self.poll_thread.daemon = True
+        self.poll_thread.start()
 
 
     def add_port(self, port):
@@ -85,7 +116,12 @@ class CursedProxy:
             logger.error(f"Failed to remove port {port}.")
 
     def stop(self):
-        logger.info("Unloading eBPF program...")
+        self.running = False
+        if hasattr(self, 'poll_thread') and self.poll_thread:
+            self.poll_thread.join(timeout=1.0)
+            
+        logger.info("Tearing down eBPF resources...")
+        self.bpf_lib.teardown_ringbuf()
         self.bpf_lib.unload_ebpf()
         logger.info("eBPF program unloaded.")
 
@@ -125,11 +161,6 @@ class CursedProxy:
 
     def remove_regex(self, port):
         if port in self.regex_keys:
-            if not hasattr(self.bpf_lib, 'remove_dfa_transition_configured'):
-                self.bpf_lib.remove_dfa_transition.argtypes = [ctypes.c_uint64]
-                self.bpf_lib.remove_dfa_transition.restype = ctypes.c_int
-                self.bpf_lib.remove_dfa_transition_configured = True
-                
             count = 0
             for key in self.regex_keys[port]:
                 ret = self.bpf_lib.remove_dfa_transition(ctypes.c_uint64(key))
@@ -199,12 +230,6 @@ class CursedProxy:
                 state_mapping[s] = next_id
                 next_id += 1
                 
-        # Configure ctypes signature if not already done
-        if not hasattr(self.bpf_lib, 'add_dfa_transition_configured'):
-            self.bpf_lib.add_dfa_transition.argtypes = [ctypes.c_uint64, ctypes.c_uint32]
-            self.bpf_lib.add_dfa_transition.restype = ctypes.c_int
-            self.bpf_lib.add_dfa_transition_configured = True
-            
         success_count = 0
         for (src_state, char_val), dst_state in dfa_info["transitions"].items():
             mapped_src = state_mapping[src_state]
