@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cursed-proxy"
+version = "0.1.0"
+description = "eBPF based regex proxy"
+requires-python = ">=3.8"
+dependencies = [
+    "pyformlang"
+]
+
+[project.scripts]
+cursed-proxy = "cursed_proxy.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["cursed_proxy*"]
+
+[tool.setuptools.package-data]
+"cursed_proxy" = ["libcursed_proxy.so"]
