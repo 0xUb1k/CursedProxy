@@ -20,3 +20,6 @@ include = ["cursed_proxy*"]
 
 [tool.setuptools.package-data]
 "cursed_proxy" = ["libcursed_proxy.so"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
