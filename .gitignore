@@ -29,7 +29,6 @@ MANIFEST
 
 # C & eBPF Build Artifacts
 *.o
-*.so
 bpf/vmlinux.h
 bpf/*.skel.h
 
