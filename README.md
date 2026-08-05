@@ -7,6 +7,11 @@ Instead of routing packets to userspace, `cursed-proxy` compiles your regex rule
 ## Why?
 Honestly? I really needed an excuse to learn how eBPF filters work, and I needed an excuse to write a TCP proxy too. This is still a fun side-project and definitely not production-tested, so use it carefully!
 
+## Architectural Limitations
+Because this is a **Layer-4 sockmap proxy**, the kernel physically intercepts socket buffers and reroutes them through BPF memory queues. This causes two notable side effects:
+1. **Zero-copy is disabled:** Tools that rely on `sendfile` or `splice` (like NGINX serving static files) will fail.
+2. **Epoll wakeups get swallowed:** High-concurrency async frameworks (Go, Node.js, Rust Tokio) that use edge-triggered `epoll` might intermittently hang under heavy load (not tested).
+
 ## TODOs
 * [ ] When a DFA gets updated there is a time interval where no rule is applied to that specific port. We absolutely don't want this.
 * [ ] Handle fragmented packets correctly (right now, if a payload is split across two packets like `[GET /a][dmin]`, the DFA resets and it slips through)
