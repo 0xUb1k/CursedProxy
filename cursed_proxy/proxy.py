@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 import threading
+from collections import Counter
 
 from pyformlang.regular_expression import PythonRegex
 
@@ -28,6 +29,9 @@ class CursedProxy:
         self.config = {}
         self.regex_keys = {}
         self.running = False
+
+        # stats
+        self.n_dropped = Counter()
 
         self._configure_ctypes_signatures()
 
@@ -76,6 +80,7 @@ class CursedProxy:
 
     def _ringbuf_callback(self, port, match_len, payload_ptr):
         raw_bytes = ctypes.string_at(payload_ptr, match_len)
+        self.n_dropped[port] += 1
         matched_str = repr(raw_bytes)
         logger.warning(
             f"\033[91m[DROPPED]\033[0m packet on port {port}! Matched snippet: {matched_str}"
@@ -134,6 +139,14 @@ class CursedProxy:
         self.bpf_lib.teardown_ringbuf()
         self.bpf_lib.unload_ebpf()
         logger.info("eBPF program unloaded.")
+
+        if self.n_dropped:
+            logger.info("=== Final Drop Statistics ===")
+            for port, count in self.n_dropped.most_common():
+                logger.info(f"Port {port}: {count} packets dropped")
+            logger.info("=============================")
+        else:
+            logger.info("No packets were dropped during this session.")
 
     # config in the form of {port: "ebpf", ...}
     def sync_config(self, new_config: dict):

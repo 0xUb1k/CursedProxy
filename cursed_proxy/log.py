@@ -64,11 +64,55 @@ class ColorFormatter(logging.Formatter):
         return formatter.format(record)
 
 
-def setup_logging(verbose=False):
+import re
+
+class PlainFormatter(logging.Formatter):
+    PREFIXES = {
+        logging.DEBUG: "[*]",
+        logging.INFO: "[+]",
+        logging.WARNING: "[!]",
+        logging.ERROR: "[-]",
+        logging.CRITICAL: "[!]"
+    }
+    
+    def __init__(self):
+        super().__init__()
+        self.ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+
+    def format(self, record):
+        prefix = self.PREFIXES.get(record.levelno, "[?]")
+        
+        if "proxy" in record.name and record.name != "cursed_proxy":
+            name_plain = f"[{record.name.split('.')[-1]}]"
+        else:
+            name_plain = "[main]"
+
+        log_fmt = f"%(asctime)s {prefix} {name_plain} %(message)s"
+        formatter = logging.Formatter(log_fmt, datefmt="%H:%M:%S")
+        
+        # Strip ANSI codes from the message for the file output
+        original_msg = record.msg
+        if isinstance(record.msg, str):
+            record.msg = self.ansi_escape.sub('', record.msg)
+            
+        formatted = formatter.format(record)
+        record.msg = original_msg  # Restore for the stream handler
+        return formatted
+
+def setup_logging(verbose=False, log_file=None):
     logger = logging.getLogger("cursed_proxy")
-    handler = logging.StreamHandler()
-    handler.setFormatter(ColorFormatter())
-    logger.addHandler(handler)
     logger.setLevel(logging.DEBUG if verbose else logging.INFO)
     logger.propagate = False
+    
+    # Console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(ColorFormatter())
+    logger.addHandler(console_handler)
+    
+    # File handler
+    if log_file:
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setFormatter(PlainFormatter())
+        logger.addHandler(file_handler)
+        
     return logger

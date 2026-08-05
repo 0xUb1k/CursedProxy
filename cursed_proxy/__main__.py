@@ -44,22 +44,11 @@ def main():
         action="store_true",
         help="Enable verbose eBPF checker logging",
     )
-    parser.add_argument(
-        "-c",
-        "--config",
-        dest="config_path",
-        default="proxy.conf",
-        help="Path to configuration file",
-    )
-    parser.add_argument(
-        "-i",
-        "--interval",
-        type=int,
-        default=1,
-        help="Config polling interval in seconds",
-    )
+    parser.add_argument("-c", "--config", dest="config_path", default="proxy.conf", help="Path to configuration file")
+    parser.add_argument("-i", "--interval", type=int, default=1, help="Config polling interval in seconds")
+    parser.add_argument("-l", "--log-file", dest="log_file", default=None, help="Path to output log file")
     args = parser.parse_args()
-    logger = setup_logging(args.verbose)
+    logger = setup_logging(args.verbose, args.log_file)
 
     if os.geteuid() != 0:
         logger.warning("eBPF requires root privileges. Escalating via sudo...")
