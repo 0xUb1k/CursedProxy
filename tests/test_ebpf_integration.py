@@ -97,3 +97,23 @@ def test_malicious_traffic(setup_echo_server, ebpf_proxy):
     # The SKB is dropped silently in the kernel, so the userspace socket will timeout
     # or the connection might be reset. We assert no response is received.
     assert response is None
+
+def test_starts_with_traffic(setup_echo_server, ebpf_proxy):
+    # Update config to test the starts-with behavior natively
+    ebpf_proxy.sync_config({PORT: "GET /admin.*"})
+    time.sleep(1) # let bpf maps update
+
+    # 1. This should PASS (doesn't start with GET)
+    payload1 = b"POST /admin HTTP/1.1\n"
+    response1 = send_payload(payload1)
+    assert response1 == payload1
+
+    # 2. This should DROP (starts with GET /admin)
+    payload2 = b"GET /admin/settings HTTP/1.1\n"
+    response2 = send_payload(payload2)
+    assert response2 is None
+    
+    # 3. This should PASS (has GET /admin inside, but doesn't start with it)
+    payload3 = b"abc GET /admin/settings"
+    response3 = send_payload(payload3)
+    assert response3 == payload3
