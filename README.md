@@ -12,9 +12,7 @@ Honestly? I really needed an excuse to learn how eBPF filters work, and I needed
 * [ ] Make the DFA state-machine parsing faster
 * [ ] Allow injecting custom replacement payloads instead of just dropping
 
----
-
-## 🛠️ How to use it
+## How to use it
 
 ### Requirements
 * A relatively modern Linux Kernel (with BTF enabled, most are nowadays)
@@ -42,7 +40,7 @@ pip install .
 8080: GET /admin.*
 ```
 
-> **⚠️ Note on Regex Rules:** 
+> **Note on Regex Rules:** 
 > `cursed-proxy` uses `pyformlang` to compile your regex into a pure mathematical DFA.
 > * **Supported Syntax:** Standard formal regex features work perfectly. You can use `.` (any char), `*` (0 or more), `+` (1 or more), `?` (0 or 1), `|` (OR), `()` (Grouping), character classes like `[a-zA-Z]` or `\d`, and quantifiers like `a{1,3}`.
 > * **Unsupported Syntax:** Advanced non-regular extensions like lookarounds `(?=...)` or backreferences `\1` will fail to compile.
