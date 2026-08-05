@@ -12,8 +12,10 @@ Honestly? I really needed an excuse to learn how eBPF filters work, and I needed
 * [ ] Handle fragmented packets correctly (right now, if a payload is split across two packets like `[GET /a][dmin]`, the DFA resets and it slips through)
 * [ ] Make the DFA state-machine parsing faster
 * [ ] Make DFA hash map lookup faster by using another datastructure.
+* [ ] Using bpf_for to get unbounded for loops, currently 2048 bytes max are checked.
+* [ ] Using a global buffer if the same DFA is reused
 * [ ] Allow injecting custom replacement payloads instead of just dropping
-* [ ] Add more colors and better logging.
+* [x] Add more colors and better logging.
 
 ## How to use it
 
