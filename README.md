@@ -53,11 +53,6 @@ sudo cursed-proxy -c proxy.conf
 
 That's it! The proxy watches `proxy.conf` in the background. If you edit and save the file, it will instantly compile the new regex and hot-reload the eBPF maps without dropping any active connections.
 
-### CLI Options
-* `-c, --config`: Path to your config file (default: `proxy.conf`)
-* `-i, --interval`: How often to poll the config file for changes in seconds (default: 1)
-* `-v, --verbose`: Enable spammy libbpf debug logging
-
 ---
 
 ## Building from Source
