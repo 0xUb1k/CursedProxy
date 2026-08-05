@@ -126,3 +126,35 @@ def test_starts_with_traffic(setup_echo_server, ebpf_proxy):
     payload3 = b"abc GET /admin/settings"
     response3 = send_payload(payload3)
     assert response3 == payload3
+
+
+def test_big_payload_match(setup_echo_server, ebpf_proxy):
+    # Update config to match anything containing DROPME
+    ebpf_proxy.sync_config({PORT: ".*DROPME.*"})
+    time.sleep(1)
+
+    # Payload with DROPME at byte 1500 (within the 2048 byte MAX_SCAN_DEPTH limit)
+    # Followed by 5 MB of random data to ensure the proxy can drop massive packets
+    payload = (b"A" * 1500) + b"DROPME" + (b"B" * 5_000_000)
+    
+    # The packet should be ruthlessly dropped
+    response = send_payload(payload)
+    assert response is None
+
+
+def test_big_payload_bypass(setup_echo_server, ebpf_proxy):
+    ebpf_proxy.sync_config({PORT: ".*DROPME.*"})
+    time.sleep(1)
+
+    # Payload with DROPME at byte 3500 (BEYOND the 2048 byte MAX_SCAN_DEPTH limit)
+    # On a local loopback interface, the MTU is 65536, meaning the first packet 
+    # contains 65,536 bytes. The proxy only scans the first 2048 bytes of every packet
+    # to preserve zero-copy performance. 
+    # Therefore, the proxy will not see this signature and will let it pass!
+    payload = (b"A" * 3500) + b"DROPME" + (b"B" * 5_000_000)
+    
+    response = send_payload(payload)
+    
+    # The proxy let it through, so the echo server echoes the first 1024 bytes back
+    assert response == (b"A" * 1024)
+

@@ -5,6 +5,10 @@
 
 #define MAX_SCAN_DEPTH 2048 //please god pleasee
 #define MAX_LOG_PAYLOAD 32
+#define AF_INET 2
+
+#define PASS 0
+#define DROP 1
 
 struct event {
     __u32 port;
@@ -16,19 +20,6 @@ struct {
     __uint(max_entries, 256 * 1024);
 } rb SEC(".maps");
 
-
-
-/*
- * simply says "everything that arrives must pass :)"
- * this creates a problem with fragmented packets, like packet1: [expl] packet2: [oit]
- * maybe I can make the DFA save its last state or something
-*/
-SEC("sk_skb")
-int police_officer(struct __sk_buff *ctx)
-{
-    return ctx->len;
-}
-
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __type(key, __u64);
@@ -36,39 +27,69 @@ struct {
     __uint(max_entries, 1024 * 256);
 } dfa_map SEC(".maps");
 
-SEC("sk_skb")
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, __u32);    //port
+    __type(value, __u32); // 1 = true, 0 = false 
+    __uint(max_entries, 256);
+} managed_ports SEC(".maps");
+
+SEC("cgroup_skb/ingress")
 int judge(struct __sk_buff *ctx) {
-  if (bpf_skb_pull_data(ctx, ctx->len) < 0) {
-    /*
-    * there is a possibility that this function fails, at that point there will be bigger
-    * problems then the proxy itself, but to reduce the catastrofy lets make everything pass.
-    * also if tcpdump is running the packets will be uncloned by this funciton, could worsen performance a little bit.
-    */
-    return SK_PASS;
-  }
 
-    void *data_end = (void *)(long)ctx->data_end;
-    void *data = (void *)(long)ctx->data;
-    unsigned char *payload = data;
+    //we do not like ipv6
+    if (ctx->family != AF_INET) return 1;
+
+    //casting to ipv4 and checking if it is tcp
+    struct iphdr iph;
+    if (bpf_skb_load_bytes(ctx, 0, &iph, sizeof(iph)) < 0) return 1;
+    if (iph.protocol != IPPROTO_TCP) return 1;
     
-    __u64 port = ctx->local_port; 
-    __u32 current_state = 1;
-    int matched = 0;
-    int i;
+    __u8 *ip_bytes = (__u8 *)&iph;
+    __u32 ip_len = (ip_bytes[0] & 0x0F) * 4;
 
+    //casting to tcp
+    struct tcphdr tcph;
+    if (bpf_skb_load_bytes(ctx, ip_len, &tcph, sizeof(tcph)) < 0) return 1;
+    
+    __u8 *tcp_bytes = (__u8 *)&tcph;
+    __u32 tcp_len = (tcp_bytes[12] >> 4) * 4;
+
+    //checks if the port is on of out targets
+    __u32 port = __builtin_bswap16(tcph.dest);
+    __u32 *is_managed = bpf_map_lookup_elem(&managed_ports, &port);
+    if (!is_managed || !*is_managed) {
+        return PASS; 
+    }
+
+    __u32 payload_offset = ip_len + tcp_len;
+    if (ctx->len <= payload_offset) {
+        return PASS;
+    }
+    __u32 payload_len = ctx->len - payload_offset;
+
+    __u32 scan_limit = payload_len;
+    if (scan_limit > MAX_SCAN_DEPTH) {
+        scan_limit = MAX_SCAN_DEPTH;
+    }
+
+    __u32 current_state = 1;
+    int matched = 0; 
+    int i;
+    __u8 byte;
+
+    // DFA execution
     for (i = 0; i < MAX_SCAN_DEPTH; i++) {
-        if ((void *)(payload + i + 1) > data_end) {
-            break; 
-        }
+        if (i >= payload_len) break;
         
-        __u64 key = (port << 24) | (current_state << 8) | payload[i];
+        if (bpf_skb_load_bytes(ctx, payload_offset + i, &byte, 1) < 0) break;
+        
+        __u64 key = (((__u64)port) << 24) | (((__u64)current_state) << 8) | byte;
         __u32 *lookup = bpf_map_lookup_elem(&dfa_map, &key);
         
         if (lookup) {
             __u32 val = *lookup;
-            
             current_state = val & 0x7FFFFFFF;
-            
             if (val & 0x80000000) {
                 matched = 1;
                 break;
@@ -79,71 +100,28 @@ int judge(struct __sk_buff *ctx) {
     }
 
     if (matched) {
-        
-        //Loging part!
+        // logging stuff
         struct event *e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
         if (e) {
-            e->port = ctx->local_port;
+            e->port = port;
             
             __u32 len_to_copy = i + 1;
             if (len_to_copy > 20) {
                 len_to_copy = 20;
             }
-            
             len_to_copy &= 31;
-            
             e->match_len = len_to_copy;
             
-            bpf_probe_read_kernel(e->matched_payload, len_to_copy, payload);
+            // Re-read the matched portion into the event buffer safely
+            bpf_skb_load_bytes(ctx, payload_offset, e->matched_payload, len_to_copy);
             e->matched_payload[len_to_copy] = '\0';
             
             bpf_ringbuf_submit(e, 0); 
         }
-        return SK_DROP;
+        return DROP;
     }
 
-    return SK_PASS;
-}
-
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, __u32);    //port
-    __type(value, __u32); // 1 = true, 0 = false 
-    __uint(max_entries, 256);
-} managed_ports SEC(".maps");
-
-struct {
-    __uint(type, BPF_MAP_TYPE_SOCKHASH);
-    __type(key, __u64);
-    __type(value, __u32);
-    __uint(max_entries, 65535);
-} sock_hash SEC(".maps");
-
-/*
-* Sockops gets executed for every socket event, bpf_sockmap registers all socket connecions that have the right
-* local port. Userspace hooks the above functions to this map. 
-* In the future I could add more sock_hash maps for different stuff, or use tail functions, i'm to incompetent for this decision.
-*/
-SEC("sockops")
-int bpf_sockmap(struct bpf_sock_ops *skops)
-{
-  __u32 op = skops->op;
-   
-  //BPF_SOCK_OPS_ACTIVE_ESTABLISHED_CB for outgoing traffic,
-  //could be interesting for msg modification
-  if (op == BPF_SOCK_OPS_PASSIVE_ESTABLISHED_CB) {
-        
-    unsigned long local_p = skops->local_port;
-    
-    char *is_managed_local = bpf_map_lookup_elem(&managed_ports, &local_p);
-    
-    if (is_managed_local && *is_managed_local) {
-      //to remember that this packet needs to be proxied later
-      __u64 cookie = bpf_get_socket_cookie(skops);
-      bpf_sock_hash_update(skops, &sock_hash, &cookie, BPF_NOEXIST);
-    }
-  }
-  return 0;
+    return PASS;
 }
 
 char LICENSE[] SEC("license") = "GPL";

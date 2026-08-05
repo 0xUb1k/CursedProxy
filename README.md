@@ -1,25 +1,22 @@
 # cursed-proxy
 
-A highly cursed, eBPF-based TCP proxy meant for Attack & Defence CTF competitions (or just messing around with kernel stuff). 
+A highly cursed, eBPF-based TCP proxy using Deterministic Finite Automata, meant for Attack & Defence CTF competitions (or just messing around with kernel stuff). 
 
-Instead of routing packets to userspace, `cursed-proxy` compiles your regex rules into Deterministic Finite Automata and injects them directly into the Linux kernel using eBPF maps. It reads your packets byte-by-byte at the socket layer and silently drops malicious payloads before your CTF services even know they exist.
+Instead of routing packets to userspace, `cursed-proxy` compiles your regex rules into DFS and injects them directly into the Linux kernel using eBPF maps. It silently drops malicious payloads before your CTF services even know they exist. It handles iperf3 tests with 44 Gbits/sec of loopback traffic.
 
 ## Why?
 Honestly? I really needed an excuse to learn how eBPF filters work, and I needed an excuse to write a TCP proxy too. This is still a fun side-project and definitely not production-tested, so use it carefully!
 
-## Architectural Limitations
-Because this is a **Layer-4 sockmap proxy**, the kernel physically intercepts socket buffers and reroutes them through BPF memory queues. This causes two notable side effects:
-1. **Zero-copy is disabled:** Tools that rely on `sendfile` or `splice` (like NGINX serving static files) will fail.
-2. **Epoll wakeups get swallowed:** High-concurrency async frameworks (Go, Node.js, Rust Tokio) that use edge-triggered `epoll` might intermittently hang under heavy load (not tested).
 
 ## TODOs
 * [ ] When a DFA gets updated there is a time interval where no rule is applied to that specific port. We absolutely don't want this.
 * [ ] Handle fragmented packets correctly (right now, if a payload is split across two packets like `[GET /a][dmin]`, the DFA resets and it slips through)
-* [ ] Make the DFA state-machine parsing faster
+* [ ] Reset the connection instead of dropping the packet.
 * [ ] Make DFA hash map lookup faster by using another datastructure.
 * [ ] Using bpf_for to get unbounded for loops, currently 2048 bytes max are checked.
 * [ ] Using a global buffer if the same DFA is reused
-* [ ] Allow injecting custom replacement payloads instead of just dropping
+* [ ] Make the DFA state-machine parsing faster
+* [x] Solve the epoll situation by changing hooks to cgroup_skb.
 * [x] Add more colors and better logging.
 
 ## How to use it

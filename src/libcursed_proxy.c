@@ -8,7 +8,7 @@
 
 struct cursed_proxy_bpf *skel = NULL;
 int cgroup_fd = -1;
-struct bpf_link *sockops_link = NULL;
+struct bpf_link *cgroup_link = NULL;
 
 struct event {
     __u32 port;
@@ -76,26 +76,12 @@ int load_ebpf()
         cgroup_fd = open("/sys/fs/cgroup/unified", O_RDONLY);
     }
     if (cgroup_fd >= 0) {
-        sockops_link = bpf_program__attach_cgroup(skel->progs.bpf_sockmap, cgroup_fd);
-        if (!sockops_link) {
-            fprintf(stderr, "Failed to attach sockops to cgroup\n");
+        cgroup_link = bpf_program__attach_cgroup(skel->progs.judge, cgroup_fd);
+        if (!cgroup_link) {
+            fprintf(stderr, "Failed to attach judge to cgroup\n");
         }
     } else {
-        fprintf(stderr, "Failed to open cgroup v2 mount for sockops\n");
-    }
-
-    int map_fd = bpf_map__fd(skel->maps.sock_hash);
-    int parser_fd = bpf_program__fd(skel->progs.police_officer);
-    int verdict_fd = bpf_program__fd(skel->progs.judge);
-    
-    err = bpf_prog_attach(parser_fd, map_fd, BPF_SK_SKB_STREAM_PARSER, 0);
-    if (err) {
-        fprintf(stderr, "Failed to attach parser to sock_hash map (err: %d)\n", err);
-    }
-    
-    err = bpf_prog_attach(verdict_fd, map_fd, BPF_SK_SKB_STREAM_VERDICT, 0);
-    if (err) {
-        fprintf(stderr, "Failed to attach verdict to sock_hash map (err: %d)\n", err);
+        fprintf(stderr, "Failed to open cgroup v2 mount\n");
     }
 
     printf("Successfully attached! Proxy is running...\n");
@@ -160,9 +146,13 @@ void teardown_ringbuf() {
 
 void unload_ebpf()
 {
-    if (sockops_link) {
-        bpf_link__destroy(sockops_link);
-        sockops_link = NULL;
+    if (rb) {
+        ring_buffer__free(rb);
+        rb = NULL;
+    }
+    if (cgroup_link) {
+        bpf_link__destroy(cgroup_link);
+        cgroup_link = NULL;
     }
     if (cgroup_fd >= 0) {
         close(cgroup_fd);
