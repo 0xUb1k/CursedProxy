@@ -11,6 +11,7 @@ Honestly? I really needed an excuse to learn how eBPF filters work, and I needed
 * [ ] When a DFA gets updated there is a time interval where no rule is applied to that specific port. We absolutely don't want this.
 * [ ] Handle fragmented packets correctly (right now, if a payload is split across two packets like `[GET /a][dmin]`, the DFA resets and it slips through)
 * [ ] Make the DFA state-machine parsing faster
+* [ ] Make DFA hash map lookup faster by using another datastructure.
 * [ ] Allow injecting custom replacement payloads instead of just dropping
 
 ## How to use it

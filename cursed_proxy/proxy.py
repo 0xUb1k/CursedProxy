@@ -2,8 +2,41 @@ import ctypes
 from pyformlang.regular_expression import PythonRegex
 import os
 import logging
+import sys
+import threading
+import time
 from collections import defaultdict
 logger = logging.getLogger(__name__)
+
+class Spinner:
+    def __init__(self, message="Loading..."):
+        self.message = message
+        self.running = False
+        self.thread = None
+
+    def spin(self):
+        chars = "|/-\\"
+        idx = 0
+        while self.running:
+            current_time = time.strftime("%H:%M:%S", time.localtime())
+            sys.stdout.write(f"\r\033[90m{current_time}\033[0m \033[94m[*]\033[0m {self.message} {chars[idx % len(chars)]}")
+            sys.stdout.flush()
+            idx += 1
+            time.sleep(0.1)
+            
+    def __enter__(self):
+        self.running = True
+        self.thread = threading.Thread(target=self.spin)
+        self.thread.daemon = True
+        self.thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.running = False
+        if self.thread:
+            self.thread.join()
+        sys.stdout.write("\r\033[K") # Clear the line completely without a newline
+        sys.stdout.flush()
 
 class CursedProxy:
     def __init__(self, ebpf_path=None):
@@ -112,17 +145,19 @@ class CursedProxy:
     def compile_regex(self, regex_pattern):
         regex = PythonRegex(regex_pattern)
 
-        logger.info(f"Compiling regex pattern: {' '.join(regex_pattern)}")
+        logger.info(f"Compiling regex pattern: {' '.join(regex_pattern)}, this may take a while...")
 
-        logger.debug("Creating epsilon non-deterministic finite automata")
-        enfa = regex.to_epsilon_nfa()
-        logger.debug("Folding into deterministic finite automata")
-        dfa = enfa.to_deterministic()
-        logger.debug("Minimizing DFA...")
-        minimized_dfa = dfa.minimize()
-        logger.debug("Mapping states for eBPF consumption...")
-
-        states = list(minimized_dfa.states)
+        with Spinner("Creating epsilon NFA..."):
+            enfa = regex.to_epsilon_nfa()
+            
+        with Spinner("Folding into deterministic finite automata..."):
+            dfa = enfa.to_deterministic()
+            
+        with Spinner("Minimizing DFA..."):
+            minimized_dfa = dfa.minimize()
+            
+        with Spinner("Mapping states for eBPF consumption..."):
+            states = list(minimized_dfa.states)
         state_to_idx = {state: i for i, state in enumerate(states)}
         
         start_idx = state_to_idx[minimized_dfa.start_state]

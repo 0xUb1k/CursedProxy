@@ -3,7 +3,7 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
-#define MAX_SCAN_DEPTH 128 //please god pleasee
+#define MAX_SCAN_DEPTH 4094 //please god pleasee
 
 /*
  * simply says "everything that arrives must pass :)"
