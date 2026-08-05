@@ -1,1 +1,42 @@
+# Python Virtual Environments
+venv/
+env/
+.env/
+
+# Python Cache & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python Packaging & Distribution
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
 *.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# C & eBPF Build Artifacts
+*.o
+*.so
+bpf/vmlinux.h
+bpf/*.skel.h
+cursed_proxy/libcursed_proxy.so
+
+# IDEs & OS Files
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
