@@ -4,7 +4,6 @@ BPFTOOL ?= bpftool
 
 CFLAGS = -g -O2 -Wall -fPIC
 LDFLAGS = -shared -lbpf -lelf -lz
-# Important for CO-RE: -g and -target bpf
 BPF_CFLAGS = -g -O2 -target bpf
 
 BPF_DIR = bpf
@@ -30,7 +29,7 @@ $(BPF_SKEL): $(BPF_OBJ)
 	@echo "  GEN-SKEL $@"
 	$(BPFTOOL) gen skeleton $< > $@
 
-$(SHARED_LIB): $(SRC_DIR)/register_ebpf.c $(BPF_SKEL)
+$(SHARED_LIB): $(SRC_DIR)/libcursed_proxy.c $(BPF_SKEL)
 	@echo "  CC       $@"
 	$(CC) $(CFLAGS) -I$(BPF_DIR) $< -o $@ $(LDFLAGS)
 

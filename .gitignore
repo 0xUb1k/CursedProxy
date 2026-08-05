@@ -32,7 +32,6 @@ MANIFEST
 *.so
 bpf/vmlinux.h
 bpf/*.skel.h
-cursed_proxy/libcursed_proxy.so
 
 # IDEs & OS Files
 .vscode/
