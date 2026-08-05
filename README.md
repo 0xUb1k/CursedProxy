@@ -25,7 +25,12 @@ I've already included the pre-compiled, CO-RE compatible `libcursed_proxy.so` in
 ```bash
 git clone https://github.com/0xUb1k/CursedProxy.git
 cd CursedProxy
+
+# Standard pip:
 pip install .
+
+# Or using uv (blazing fast):
+uv pip install .
 ```
 *(If you don't trust my `.so` file, you can easily compile it from source. See the section at the bottom).*
 
@@ -48,7 +53,11 @@ pip install .
 
 2. Run the proxy as root:
 ```bash
+# If installed via pip:
 sudo cursed-proxy -c proxy.conf
+
+# Or run directly with uv without installing:
+sudo uv run cursed-proxy -c proxy.conf
 ```
 
 That's it! The proxy watches `proxy.conf` in the background. If you edit and save the file, it will instantly compile the new regex and hot-reload the eBPF maps without dropping any active connections.
@@ -80,6 +89,11 @@ This dumps your kernel's BTF to `vmlinux.h`, compiles the eBPF object, generates
 ## Testing
 If you're making changes and want to run the test suite (requires root for the integration tests):
 ```bash
+# Using pip:
 pip install -e .[dev]
 sudo pytest tests/
+
+# Using uv:
+uv pip install -e .[dev]
+sudo uv run pytest tests/
 ```
