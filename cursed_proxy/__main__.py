@@ -1,4 +1,4 @@
-from .proxy import CursedProxy
+from cursed_proxy.proxy import CursedProxy
 import argparse
 import logging
 import time
