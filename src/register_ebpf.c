@@ -106,6 +106,13 @@ int add_dfa_transition(__u64 key, __u32 val)
     return bpf_map_update_elem(fd, &key, &val, BPF_ANY);
 }
 
+int remove_dfa_transition(__u64 key)
+{
+    if (!skel) return -1;
+    int fd = bpf_map__fd(skel->maps.dfa_map);
+    return bpf_map_delete_elem(fd, &key);
+}
+
 void unload_ebpf()
 {
     if (sockops_link) {
