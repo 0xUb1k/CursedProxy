@@ -37,23 +37,6 @@ def test_sync_config_adds_new_regex(mock_proxy):
     assert mock_proxy.bpf_lib.update_port_dfa.called
 
 
-def test_sync_config_caches_regex(mock_proxy):
-    # Add
-    mock_proxy.sync_config({1234: ".*david.*"})
-    mock_proxy.bpf_lib.update_port_dfa.reset_mock()
-
-    # Remove port but keep config
-    mock_proxy.sync_config({})
-    assert 1234 not in mock_proxy.ports
-    assert 1234 in mock_proxy.config
-
-    # Re-add same regex
-    mock_proxy.sync_config({1234: ".*david.*"})
-    assert 1234 in mock_proxy.ports
-    # Should NOT have compiled or added DFA transitions again
-    mock_proxy.bpf_lib.update_port_dfa.assert_not_called()
-
-
 def test_sync_config_updates_changed_regex(mock_proxy):
     mock_proxy.sync_config({1234: ".*david.*"})
     mock_proxy.bpf_lib.update_port_dfa.reset_mock()
@@ -64,8 +47,8 @@ def test_sync_config_updates_changed_regex(mock_proxy):
     assert mock_proxy.config[1234] == ".*newpattern.*"
 
     # Should have removed old transitions and added new ones
-    # Should have removed old transitions and added new ones
-    assert mock_proxy.bpf_lib.remove_port_dfa.called
+    # Should just atomically overwrite using update_port_dfa
+    assert not mock_proxy.bpf_lib.remove_port_dfa.called
     assert mock_proxy.bpf_lib.update_port_dfa.called
 
 

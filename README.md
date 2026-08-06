@@ -13,8 +13,8 @@ Honestly? I really needed an excuse to learn how eBPF filters work, and I needed
 * [ ] Reset the connection instead of dropping the packet.
 * [ ] Make DFA hash map lookup faster by using another datastructure.
 * [ ] Using bpf_for to get unbounded for loops, currently 2048 bytes max are checked.
-* [ ] Using a global buffer if the same DFA is reused
 * [ ] Make the DFA state-machine parsing faster
+* [x] Using a global buffer if the same DFA is reused
 * [x] When a DFA gets updated there is a time interval where no rule is applied to that specific port. We absolutely don't want this.
 * [x] Solve the epoll situation by changing hooks to cgroup_skb.
 * [x] Add more colors and better logging.

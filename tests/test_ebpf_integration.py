@@ -20,7 +20,7 @@ def echo_server(stop_event):
     while not stop_event.is_set():
         try:
             conn, _addr = server.accept()
-            conn.settimeout(5.0)  # give client time to send data
+            conn.settimeout(0.5)  # give client time to send data, but recover fast on drops
             try:
                 data = conn.recv(1024)
                 if data:
@@ -103,8 +103,8 @@ def test_malicious_traffic(setup_echo_server, ebpf_proxy):
     payload = b"This packet contains DROPME inside"
     response = send_payload(payload)
     # The SKB is dropped silently in the kernel, so the userspace socket will timeout
-    # or the connection might be reset. We assert no response is received.
-    assert response is None
+    # or the connection might be reset, or return EOF (b'').
+    assert response in (None, b'')
 
 
 def test_starts_with_traffic(setup_echo_server, ebpf_proxy):
@@ -120,7 +120,7 @@ def test_starts_with_traffic(setup_echo_server, ebpf_proxy):
     # 2. This should DROP (starts with GET /admin)
     payload2 = b"GET /admin/settings HTTP/1.1\n"
     response2 = send_payload(payload2)
-    assert response2 is None
+    assert response2 in (None, b'')
 
     # 3. This should PASS (has GET /admin inside, but doesn't start with it)
     payload3 = b"abc GET /admin/settings"
@@ -139,7 +139,7 @@ def test_big_payload_match(setup_echo_server, ebpf_proxy):
     
     # The packet should be ruthlessly dropped
     response = send_payload(payload)
-    assert response is None
+    assert response in (None, b'')
 
 
 def test_big_payload_bypass(setup_echo_server, ebpf_proxy):
@@ -151,7 +151,9 @@ def test_big_payload_bypass(setup_echo_server, ebpf_proxy):
     # contains 65,536 bytes. The proxy only scans the first 2048 bytes of every packet
     # to preserve zero-copy performance. 
     # Therefore, the proxy will not see this signature and will let it pass!
-    payload = (b"A" * 3500) + b"DROPME" + (b"B" * 5_000_000)
+    # We use a payload large enough to bypass 2048, but small enough (e.g. 10KB) 
+    # to avoid BrokenPipeError when the echo server closes the connection early.
+    payload = (b"A" * 3500) + b"DROPME" + (b"B" * 5000)
     
     response = send_payload(payload)
     

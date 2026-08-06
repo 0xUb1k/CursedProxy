@@ -4,6 +4,7 @@ import os
 import sys
 import threading
 from collections import Counter
+from functools import lru_cache
 
 from pyformlang.regular_expression import PythonRegex
 
@@ -158,24 +159,18 @@ class CursedProxy:
         logger.info("Syncing config...")
 
         new_config_ports = set(new_config.keys())
-
         current_ports = set(self.ports)
 
         old_ports = current_ports - new_config_ports
         for p in old_ports:
-            # not removing regexe immediatly for caching purposes
-            # so self.ports is our truth
             self.remove_port(p)
-            logger.debug(f"Buffered port {p} with regexe {self.config[p]}")
+            self.remove_regex(p)
 
-        # the slow part, could be multithreaded in the future
         for p in new_config_ports:
             if p in self.config:
                 if new_config[p] != self.config[p]:
                     logger.debug(f"Updating regex on port {p}")
                     self.add_regex(p, new_config[p])
-                elif p not in self.ports:
-                    logger.info(f"Using buffered regex on port {p}")
             else:
                 self.add_regex(p, new_config[p])
 
@@ -195,11 +190,13 @@ class CursedProxy:
             self.config.pop(port, None)
             del self.regex_keys[port]
 
-    def compile_regex(self, regex_pattern):
+    @staticmethod
+    @lru_cache(maxsize=32)
+    def compile_regex(regex_pattern):
         regex = PythonRegex(regex_pattern)
 
         logger.info(
-            f"Compiling regex pattern: {' '.join(regex_pattern)}, this may take a while..."
+            f"Compiling regex pattern: {regex_pattern}, this may take a while..."
         )
 
         with Spinner("Creating epsilon NFA..."):
@@ -243,12 +240,16 @@ class CursedProxy:
         }
 
     def add_regex(self, port, regex_string):
-
         self.config[port] = regex_string
         if port not in self.regex_keys:
             self.regex_keys[port] = []
 
+        hits_before = self.compile_regex.cache_info().hits
         dfa_info = self.compile_regex(regex_string)
+        hits_after = self.compile_regex.cache_info().hits
+
+        if hits_after > hits_before:
+            logger.debug(f"Using cached DFA for regex: {regex_string}")
 
         # eBPF uses 1 as the hardcoded start state
         state_mapping = {dfa_info["start_state"]: 1}
