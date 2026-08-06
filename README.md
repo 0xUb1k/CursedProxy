@@ -7,17 +7,12 @@ Instead of routing packets to userspace, `cursed-proxy` compiles your regex rule
 ## Why?
 Honestly? I really needed an excuse to learn how eBPF filters work, and I needed an excuse to write a TCP proxy too. This is still a fun side-project and definitely not production-tested, so use it carefully!
 
-
 ## TODOs
+* [ ] Change DFA compiler for faster parsing.
+* [ ] Exposing a /metrics endpoint for Prometheus.
+* [ ] Move to the traffic control layer, this makes forging packets and reading in place possible. 
 * [ ] Handle fragmented packets correctly (right now, if a payload is split across two packets like `[GET /a][dmin]`, the DFA resets and it slips through)
-* [ ] Reset the connection instead of dropping the packet.
-* [ ] Make DFA hash map lookup faster by using another datastructure.
-* [ ] Make the DFA state-machine parsing faster
-* [x] Using bpf_for to get unbounded for loops, currently 2048 bytes max are checked.
-* [x] Using a global buffer if the same DFA is reused
-* [x] When a DFA gets updated there is a time interval where no rule is applied to that specific port. We absolutely don't want this.
-* [x] Solve the epoll situation by changing hooks to cgroup_skb.
-* [x] Add more colors and better logging.
+* [ ] Compatibility with ipv6
 
 ## How to use it
 
