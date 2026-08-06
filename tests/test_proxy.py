@@ -32,7 +32,7 @@ def test_compile_regex(mock_proxy):
 def test_sync_config_adds_new_regex(mock_proxy):
     # Initial sync
     mock_proxy.sync_config({1234: ".*david.*"})
-    assert 1234 in mock_proxy.ports
+    assert 1234 in mock_proxy.config
     assert mock_proxy.config[1234] == ".*david.*"
     assert mock_proxy.bpf_lib.update_port_dfa.called
 

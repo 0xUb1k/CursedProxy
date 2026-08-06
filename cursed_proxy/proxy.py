@@ -26,9 +26,7 @@ class CursedProxy:
             )
             sys.exit()
 
-        self.ports = set()
         self.config = {}
-        self.regex_keys = {}
         self.running = False
 
         # stats
@@ -123,7 +121,6 @@ class CursedProxy:
     def add_port(self, port):
         ret = self.bpf_lib.add_managed_port(ctypes.c_uint(port))
         if ret == 0:
-            self.ports.add(port)
             logger.info(f"Port {port} added successfully.")
         else:
             logger.error(f"Failed to add port {port}.")
@@ -131,7 +128,6 @@ class CursedProxy:
     def remove_port(self, port):
         ret = self.bpf_lib.remove_managed_port(ctypes.c_uint(port))
         if ret == 0:
-            self.ports.discard(port)
             logger.info(f"Port {port} deactivated successfully.")
         else:
             logger.error(f"Failed to remove port {port}.")
@@ -159,7 +155,7 @@ class CursedProxy:
         logger.info("Syncing config...")
 
         new_config_ports = set(new_config.keys())
-        current_ports = set(self.ports)
+        current_ports = set(self.config.keys())
 
         old_ports = current_ports - new_config_ports
         for p in old_ports:
@@ -167,6 +163,8 @@ class CursedProxy:
             self.remove_regex(p)
 
         for p in new_config_ports:
+            is_new_port = p not in self.config
+            
             if p in self.config:
                 if new_config[p] != self.config[p]:
                     logger.debug(f"Updating regex on port {p}")
@@ -174,13 +172,13 @@ class CursedProxy:
             else:
                 self.add_regex(p, new_config[p])
 
-            if p not in self.ports:
+            if is_new_port:
                 self.add_port(p)
 
         logger.info("Sync completed.")
 
     def remove_regex(self, port):
-        if port in self.regex_keys:
+        if port in self.config:
             ret = self.bpf_lib.remove_port_dfa(ctypes.c_uint(port))
             if ret != 0:
                 logger.error(f"Failed to remove DFA for port {port}")
@@ -188,7 +186,6 @@ class CursedProxy:
                 logger.info(f"Removed DFA for port {port}.")
 
             self.config.pop(port, None)
-            del self.regex_keys[port]
 
     @staticmethod
     @lru_cache(maxsize=32)
@@ -240,9 +237,6 @@ class CursedProxy:
         }
 
     def add_regex(self, port, regex_string):
-        self.config[port] = regex_string
-        if port not in self.regex_keys:
-            self.regex_keys[port] = []
 
         hits_before = self.compile_regex.cache_info().hits
         dfa_info = self.compile_regex(regex_string)
@@ -290,9 +284,8 @@ class CursedProxy:
         
         if ret == 0:
             logger.info(
-                f"Added '{regex_string}' with {num_transitions} DFA transitions on port {port} atomically."
+                f"Added '{regex_string}' with {num_transitions} DFA transitions on port {port}."
             )
-            # regex_keys just records that we have it for this port
-            self.regex_keys[port] = [port] 
+            self.config[port] = regex_string
         else:
             logger.error(f"Failed to update DFA for port {port}")
