@@ -3,7 +3,6 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
-#define MAX_SCAN_DEPTH 2048 //please god pleasee
 #define MAX_LOG_PAYLOAD 32
 #define AF_INET 2
 
@@ -75,14 +74,10 @@ int judge(struct __sk_buff *ctx) {
     }
     __u32 payload_len = ctx->len - payload_offset;
 
-    __u32 scan_limit = payload_len;
-    if (scan_limit > MAX_SCAN_DEPTH) {
-        scan_limit = MAX_SCAN_DEPTH;
-    }
-
     __u32 current_state = 1;
     int matched = 0; 
     int i;
+    __u32 match_index = 0;
     __u8 byte;
 
     // DFA map, this could be improved, maybe multiple ports use the same DFA if they can or something
@@ -91,9 +86,7 @@ int judge(struct __sk_buff *ctx) {
         return PASS;
     }
 
-    for (i = 0; i < MAX_SCAN_DEPTH; i++) {
-        if (i >= payload_len) break;
-        
+    bpf_for(i, 0, payload_len) {
         //not very efficient i know, but i cant use pull_data so this is the only solution. In the future i will use TC if needed.
         if (bpf_skb_load_bytes(ctx, payload_offset + i, &byte, 1) < 0) break;
         
@@ -105,6 +98,7 @@ int judge(struct __sk_buff *ctx) {
             current_state = val & 0x7FFFFFFF;
             if (val & 0x80000000) {
                 matched = 1;
+                match_index = i;
                 break;
             }
         } else {
@@ -118,7 +112,7 @@ int judge(struct __sk_buff *ctx) {
         if (e) {
             e->port = port;
             
-            __u32 len_to_copy = i + 1;
+            __u32 len_to_copy = match_index + 1;
             if (len_to_copy > 20) {
                 len_to_copy = 20;
             }

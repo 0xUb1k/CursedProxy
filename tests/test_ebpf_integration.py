@@ -142,21 +142,17 @@ def test_big_payload_match(setup_echo_server, ebpf_proxy):
     assert response in (None, b'')
 
 
-def test_big_payload_bypass(setup_echo_server, ebpf_proxy):
+def test_big_payload_no_bypass(setup_echo_server, ebpf_proxy):
     ebpf_proxy.sync_config({PORT: ".*DROPME.*"})
     time.sleep(1)
 
-    # Payload with DROPME at byte 3500 (BEYOND the 2048 byte MAX_SCAN_DEPTH limit)
-    # On a local loopback interface, the MTU is 65536, meaning the first packet 
-    # contains 65,536 bytes. The proxy only scans the first 2048 bytes of every packet
-    # to preserve zero-copy performance. 
-    # Therefore, the proxy will not see this signature and will let it pass!
-    # We use a payload large enough to bypass 2048, but small enough (e.g. 10KB) 
-    # to avoid BrokenPipeError when the echo server closes the connection early.
+    # Payload with DROPME at byte 3500 (previously beyond the 2048 byte MAX_SCAN_DEPTH limit).
+    # The proxy now uses bpf_for to scan the entire payload.
+    # Therefore, the proxy will see this signature and will DROP it!
     payload = (b"A" * 3500) + b"DROPME" + (b"B" * 5000)
     
     response = send_payload(payload)
     
-    # The proxy let it through, so the echo server echoes the first 1024 bytes back
-    assert response == (b"A" * 1024)
+    # The proxy dropped it, so the userspace socket will timeout or return empty
+    assert response in (None, b'')
 
