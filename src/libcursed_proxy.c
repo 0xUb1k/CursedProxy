@@ -103,18 +103,38 @@ int remove_managed_port(unsigned int port)
     return bpf_map_delete_elem(fd, &port);
 }
 
-int add_dfa_transition(__u64 key, __u32 val)
+int update_port_dfa(unsigned int port, unsigned int *keys, unsigned int *values, unsigned int num_transitions)
 {
     if (!skel) return -1;
-    int fd = bpf_map__fd(skel->maps.dfa_map);
-    return bpf_map_update_elem(fd, &key, &val, BPF_ANY);
+    
+    LIBBPF_OPTS(bpf_map_create_opts, opts);
+    int inner_map_fd = bpf_map_create(BPF_MAP_TYPE_HASH, "inner_dfa", sizeof(__u32), sizeof(__u32), 8192, &opts);
+    if (inner_map_fd < 0) {
+        perror("bpf_map_create failed");
+        return -1;
+    }
+
+    for (unsigned int i = 0; i < num_transitions; i++) {
+        if (bpf_map_update_elem(inner_map_fd, &keys[i], &values[i], BPF_ANY) != 0) {
+            perror("bpf_map_update_elem inner failed");
+        }
+    }
+
+    int outer_fd = bpf_map__fd(skel->maps.dfa_map);
+    int err = bpf_map_update_elem(outer_fd, &port, &inner_map_fd, BPF_ANY);
+    if (err != 0) {
+        perror("bpf_map_update_elem outer failed");
+    }
+    
+    close(inner_map_fd);
+    return err;
 }
 
-int remove_dfa_transition(__u64 key)
+int remove_port_dfa(unsigned int port)
 {
     if (!skel) return -1;
     int fd = bpf_map__fd(skel->maps.dfa_map);
-    return bpf_map_delete_elem(fd, &key);
+    return bpf_map_delete_elem(fd, &port);
 }
 
 int setup_ringbuf(void (*callback)(int, int, const char*)) {

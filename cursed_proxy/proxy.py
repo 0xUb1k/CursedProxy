@@ -52,11 +52,16 @@ class CursedProxy:
         self.bpf_lib.teardown_ringbuf.restype = None
 
         # DFA transitions
-        self.bpf_lib.add_dfa_transition.argtypes = [ctypes.c_uint64, ctypes.c_uint32]
-        self.bpf_lib.add_dfa_transition.restype = ctypes.c_int
+        self.bpf_lib.update_port_dfa.argtypes = [
+            ctypes.c_uint,
+            ctypes.POINTER(ctypes.c_uint),
+            ctypes.POINTER(ctypes.c_uint),
+            ctypes.c_uint,
+        ]
+        self.bpf_lib.update_port_dfa.restype = ctypes.c_int
 
-        self.bpf_lib.remove_dfa_transition.argtypes = [ctypes.c_uint64]
-        self.bpf_lib.remove_dfa_transition.restype = ctypes.c_int
+        self.bpf_lib.remove_port_dfa.argtypes = [ctypes.c_uint]
+        self.bpf_lib.remove_port_dfa.restype = ctypes.c_int
 
         # Ports management
         self.bpf_lib.add_managed_port.argtypes = [ctypes.c_uint]
@@ -168,7 +173,6 @@ class CursedProxy:
             if p in self.config:
                 if new_config[p] != self.config[p]:
                     logger.debug(f"Updating regex on port {p}")
-                    self.remove_regex(p)
                     self.add_regex(p, new_config[p])
                 elif p not in self.ports:
                     logger.info(f"Using buffered regex on port {p}")
@@ -182,16 +186,13 @@ class CursedProxy:
 
     def remove_regex(self, port):
         if port in self.regex_keys:
-            count = 0
-            for key in self.regex_keys[port]:
-                ret = self.bpf_lib.remove_dfa_transition(ctypes.c_uint64(key))
-                if ret == 0:
-                    count += 1
-                else:
-                    logger.error(f"Failed to remove transition key: {key}")
+            ret = self.bpf_lib.remove_port_dfa(ctypes.c_uint(port))
+            if ret != 0:
+                logger.error(f"Failed to remove DFA for port {port}")
+            else:
+                logger.info(f"Removed DFA for port {port}.")
 
             self.config.pop(port, None)
-            logger.info(f"Removed {count} DFA transitions for port {port}.")
             del self.regex_keys[port]
 
     def compile_regex(self, regex_pattern):
@@ -257,28 +258,40 @@ class CursedProxy:
                 state_mapping[s] = next_id
                 next_id += 1
 
-        success_count = 0
+        keys = []
+        values = []
+
         for (src_state, char_val), dst_state in dfa_info["transitions"].items():
             mapped_src = state_mapping[src_state]
             mapped_dst = state_mapping[dst_state]
 
-            key = (port << 24) | (mapped_src << 8) | char_val
+            # Key is just state and char (no port needed)
+            key = (mapped_src << 8) | char_val
 
             val = mapped_dst
             if dst_state in dfa_info["accept_states"]:
                 val |= 0x80000000
 
-            ret = self.bpf_lib.add_dfa_transition(
-                ctypes.c_uint64(key), ctypes.c_uint32(val)
-            )
-            if ret == 0:
-                success_count += 1
-                self.regex_keys[port].append(key)
-            else:
-                logger.error(
-                    f"Failed to add transition: src={mapped_src}, char={chr(char_val)}, dst={mapped_dst}"
-                )
+            keys.append(key)
+            values.append(val)
 
-        logger.info(
-            f"Added '{regex_string}' with {success_count} DFA transitions on port {port}."
+        # Create ctypes arrays
+        num_transitions = len(keys)
+        keys_array = (ctypes.c_uint * num_transitions)(*keys)
+        values_array = (ctypes.c_uint * num_transitions)(*values)
+
+        ret = self.bpf_lib.update_port_dfa(
+            ctypes.c_uint(port),
+            keys_array,
+            values_array,
+            ctypes.c_uint(num_transitions)
         )
+        
+        if ret == 0:
+            logger.info(
+                f"Added '{regex_string}' with {num_transitions} DFA transitions on port {port} atomically."
+            )
+            # regex_keys just records that we have it for this port
+            self.regex_keys[port] = [port] 
+        else:
+            logger.error(f"Failed to update DFA for port {port}")

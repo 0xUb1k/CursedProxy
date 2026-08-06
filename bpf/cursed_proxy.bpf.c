@@ -7,8 +7,8 @@
 #define MAX_LOG_PAYLOAD 32
 #define AF_INET 2
 
-#define PASS 0
-#define DROP 1
+#define PASS 1
+#define DROP 0
 
 struct event {
     __u32 port;
@@ -20,11 +20,18 @@ struct {
     __uint(max_entries, 256 * 1024);
 } rb SEC(".maps");
 
-struct {
+struct inner_map_type {
     __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, __u64);
+    __uint(max_entries, 8192);
+    __type(key, __u32);
     __type(value, __u32);
-    __uint(max_entries, 1024 * 256);
+} inner_map SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH_OF_MAPS);
+    __uint(max_entries, 256);
+    __type(key, __u32);
+    __array(values, struct inner_map_type);
 } dfa_map SEC(".maps");
 
 struct {
@@ -78,14 +85,20 @@ int judge(struct __sk_buff *ctx) {
     int i;
     __u8 byte;
 
-    // DFA execution
+    // DFA map, this could be improved, maybe multiple ports use the same DFA if they can or something
+    void *inner_dfa = bpf_map_lookup_elem(&dfa_map, &port);
+    if (!inner_dfa) {
+        return PASS;
+    }
+
     for (i = 0; i < MAX_SCAN_DEPTH; i++) {
         if (i >= payload_len) break;
         
+        //not very efficient i know, but i cant use pull_data so this is the only solution. In the future i will use TC if needed.
         if (bpf_skb_load_bytes(ctx, payload_offset + i, &byte, 1) < 0) break;
         
-        __u64 key = (((__u64)port) << 24) | (((__u64)current_state) << 8) | byte;
-        __u32 *lookup = bpf_map_lookup_elem(&dfa_map, &key);
+        __u32 key = (current_state << 8) | byte;
+        __u32 *lookup = bpf_map_lookup_elem(inner_dfa, &key);
         
         if (lookup) {
             __u32 val = *lookup;
@@ -112,7 +125,6 @@ int judge(struct __sk_buff *ctx) {
             len_to_copy &= 31;
             e->match_len = len_to_copy;
             
-            // Re-read the matched portion into the event buffer safely
             bpf_skb_load_bytes(ctx, payload_offset, e->matched_payload, len_to_copy);
             e->matched_payload[len_to_copy] = '\0';
             

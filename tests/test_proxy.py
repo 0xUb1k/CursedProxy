@@ -15,8 +15,8 @@ def mock_proxy():
         proxy.bpf_lib.load_ebpf.return_value = 0
         proxy.bpf_lib.add_managed_port.return_value = 0
         proxy.bpf_lib.remove_managed_port.return_value = 0
-        proxy.bpf_lib.add_dfa_transition.return_value = 0
-        proxy.bpf_lib.remove_dfa_transition.return_value = 0
+        proxy.bpf_lib.update_port_dfa.return_value = 0
+        proxy.bpf_lib.remove_port_dfa.return_value = 0
         yield proxy
 
 
@@ -34,13 +34,13 @@ def test_sync_config_adds_new_regex(mock_proxy):
     mock_proxy.sync_config({1234: ".*david.*"})
     assert 1234 in mock_proxy.ports
     assert mock_proxy.config[1234] == ".*david.*"
-    assert mock_proxy.bpf_lib.add_dfa_transition.called
+    assert mock_proxy.bpf_lib.update_port_dfa.called
 
 
 def test_sync_config_caches_regex(mock_proxy):
     # Add
     mock_proxy.sync_config({1234: ".*david.*"})
-    mock_proxy.bpf_lib.add_dfa_transition.reset_mock()
+    mock_proxy.bpf_lib.update_port_dfa.reset_mock()
 
     # Remove port but keep config
     mock_proxy.sync_config({})
@@ -51,13 +51,13 @@ def test_sync_config_caches_regex(mock_proxy):
     mock_proxy.sync_config({1234: ".*david.*"})
     assert 1234 in mock_proxy.ports
     # Should NOT have compiled or added DFA transitions again
-    mock_proxy.bpf_lib.add_dfa_transition.assert_not_called()
+    mock_proxy.bpf_lib.update_port_dfa.assert_not_called()
 
 
 def test_sync_config_updates_changed_regex(mock_proxy):
     mock_proxy.sync_config({1234: ".*david.*"})
-    mock_proxy.bpf_lib.add_dfa_transition.reset_mock()
-    mock_proxy.bpf_lib.remove_dfa_transition.reset_mock()
+    mock_proxy.bpf_lib.update_port_dfa.reset_mock()
+    mock_proxy.bpf_lib.remove_port_dfa.reset_mock()
 
     # Update regex
     mock_proxy.sync_config({1234: ".*newpattern.*"})
@@ -65,8 +65,8 @@ def test_sync_config_updates_changed_regex(mock_proxy):
 
     # Should have removed old transitions and added new ones
     # Should have removed old transitions and added new ones
-    assert mock_proxy.bpf_lib.remove_dfa_transition.called
-    assert mock_proxy.bpf_lib.add_dfa_transition.called
+    assert mock_proxy.bpf_lib.remove_port_dfa.called
+    assert mock_proxy.bpf_lib.update_port_dfa.called
 
 
 def test_load_config_valid_format(tmp_path):
