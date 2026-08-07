@@ -202,6 +202,7 @@ void teardown_ringbuf() {
     }
 }
 
+__attribute__((destructor))
 void unload_ebpf()
 {
     if (rb) {
