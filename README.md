@@ -42,20 +42,14 @@ Create a plain text config file (like `proxy.conf`). Each line maps a listening 
 > The eBPF kernel program evaluates rules starting from the very first byte of the TCP payload. This means a rule like `GET /admin.*` automatically acts as a "starts-with" rule. If you want to match a string anywhere inside the payload, you must explicitly prefix it with `.*` (e.g., `.*dropme.*`).
 
 ### Running the Proxy
-
-**Option 1: Using `uv`**
 ```bash
 git clone https://github.com/0xUb1k/CursedProxy.git
 cd CursedProxy
 
+# Using uv
 sudo uv run cursed-proxy -c proxy.conf
-```
 
-**Option 2: Using `pip`**
-```bash
-git clone https://github.com/0xUb1k/CursedProxy.git
-cd CursedProxy
-
+# Using pip
 pip install .
 sudo cursed-proxy -c proxy.conf
 ```
