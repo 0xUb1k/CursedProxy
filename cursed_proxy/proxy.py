@@ -145,7 +145,7 @@ class CursedProxy:
     def add_port(self, port):
         ret = self.bpf_lib.add_managed_port(ctypes.c_uint(port))
         if ret == 0:
-            logger.info(f"Port {port} added successfully.")
+            logger.info(f"Port {port} activated successfully.")
         else:
             logger.error(f"Failed to add port {port}.")
 
