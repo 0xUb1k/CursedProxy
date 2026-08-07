@@ -66,10 +66,8 @@ The proxy watches `proxy.conf` in the background. If you edit and save the file,
 ---
 
 ## Building from Source
-
-**Ubuntu / Debian:**
 ```bash
-#Ubuntu
+#Ubuntu / Debian
 sudo apt update
 sudo apt install clang llvm make gcc libbpf-dev libelf-dev zlib1g-dev bpftool
 
