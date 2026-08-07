@@ -21,12 +21,9 @@ def mock_proxy():
 
 
 def test_compile_regex(mock_proxy):
-    dfa_info = mock_proxy.compile_regex(".*david.*")
-    assert "start_state" in dfa_info
-    assert "accept_states" in dfa_info
-    assert "transitions" in dfa_info
-    assert dfa_info["total_states"] > 0
-    assert len(dfa_info["transitions"]) > 0
+    keys, values = mock_proxy.compile_regex(".*david.*")
+    assert len(keys) > 0
+    assert len(keys) == len(values)
 
 
 def test_sync_config_adds_new_regex(mock_proxy):
@@ -82,3 +79,42 @@ def test_load_config_invalid_port_ignored(tmp_path):
 def test_load_config_missing_file():
     config = load_config("/does/not/exist.conf")
     assert config is None
+
+
+def test_invalid_regex_syntax(mock_proxy):
+    # Testing an edge case where the regex has invalid syntax
+    # This shouldn't crash the proxy, but rather log an error and not update BPF
+    mock_proxy.add_regex(5555, "[a-")
+    assert not mock_proxy.bpf_lib.update_port_dfa.called
+
+
+def test_regex_too_complex(mock_proxy, monkeypatch):
+    # Mock compile_regex to return a massive list of transitions (edge case)
+    # This ensures we don't accidentally OOM the kernel map
+    keys = [1] * 300_000
+    values = [2] * 300_000
+    
+    def mock_compile(*args, **kwargs):
+        return keys, values
+    
+    mock_compile.cache_info = lambda: type("CacheInfo", (), {"hits": 0})()
+    monkeypatch.setattr(mock_proxy, "compile_regex", mock_compile)
+    
+    mock_proxy.add_regex(8888, ".*massive.*")
+    
+    # BPF map shouldn't be updated because it exceeds 262144
+    assert not mock_proxy.bpf_lib.update_port_dfa.called
+
+
+def test_caching_behavior(mock_proxy):
+    # Test that the LRU cache is hit when assigning the same regex to a different port
+    mock_proxy.compile_regex.cache_clear()
+    
+    mock_proxy.add_regex(1111, ".*hello.*")
+    hits_after_first = mock_proxy.compile_regex.cache_info().hits
+    
+    mock_proxy.add_regex(2222, ".*hello.*")
+    hits_after_second = mock_proxy.compile_regex.cache_info().hits
+    
+    assert hits_after_second > hits_after_first
+    assert mock_proxy.bpf_lib.update_port_dfa.call_count == 2

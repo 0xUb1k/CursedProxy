@@ -52,7 +52,9 @@ class ColorFormatter(logging.Formatter):
     def format(self, record):
         prefix = self.COLORS.get(record.levelno, "[?]")
 
-        if "proxy" in record.name and record.name != "cursed_proxy":
+        if record.name == "cursed_proxy.eBPF":
+            name_colored = f"\033[94m[eBPF]\033[0m"  # Blue for eBPF
+        elif "proxy" in record.name and record.name != "cursed_proxy":
             name_colored = (
                 f"\033[96m[{record.name.split('.')[-1]}]\033[0m"  # Cyan for core proxy
             )

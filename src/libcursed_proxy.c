@@ -26,10 +26,46 @@ static int handle_event(void *ctx, void *data, size_t data_sz) {
     return 0;
 }
 
+static void (*python_log_callback)(int, const char*) = NULL;
+
+void setup_c_logging(void (*callback)(int, const char*)) {
+    python_log_callback = callback;
+}
+
+void c_log(int level, const char *fmt, ...) {
+    if (!python_log_callback) {
+        va_list args;
+        va_start(args, fmt);
+        vfprintf(stderr, fmt, args);
+        va_end(args);
+        return;
+    }
+    
+    char buffer[1024];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+    
+    python_log_callback(level, buffer);
+}
+
 struct ring_buffer *rb = NULL;
 
 static int libbpf_print_fn(enum libbpf_print_level level, const char *format, va_list args)
 {
+    // libbpf levels: 0=warn, 1=info, 2=debug
+    int mapped_level = 10; // default INFO
+    if (level == LIBBPF_WARN) mapped_level = 30;
+    else if (level == LIBBPF_INFO) mapped_level = 20;
+    else mapped_level = 10; // DEBUG
+    
+    if (python_log_callback) {
+        char buffer[1024];
+        vsnprintf(buffer, sizeof(buffer), format, args);
+        python_log_callback(mapped_level, buffer);
+        return 0;
+    }
     return vfprintf(stderr, format, args);
 }
 
@@ -51,13 +87,13 @@ int load_ebpf()
 
     skel = cursed_proxy_bpf__open();
     if (!skel) {
-        fprintf(stderr, "Failed to open BPF skeleton\n");
+        c_log(40, "Failed to open BPF skeleton\n");
         return 1;
     }
 
     err = cursed_proxy_bpf__load(skel);
     if (err) {
-        fprintf(stderr, "Failed to load and verify BPF skeleton (err: %d)\n", err);
+        c_log(40, "Failed to load and verify BPF skeleton (err: %d)\n", err);
         cursed_proxy_bpf__destroy(skel);
         skel = NULL;
         return err;
@@ -65,7 +101,7 @@ int load_ebpf()
 
     err = cursed_proxy_bpf__attach(skel);
     if (err) {
-        fprintf(stderr, "Failed to attach BPF skeleton (err: %d)\n", err);
+        c_log(40, "Failed to attach BPF skeleton (err: %d)\n", err);
         cursed_proxy_bpf__destroy(skel);
         skel = NULL;
         return err;
@@ -78,13 +114,13 @@ int load_ebpf()
     if (cgroup_fd >= 0) {
         cgroup_link = bpf_program__attach_cgroup(skel->progs.judge, cgroup_fd);
         if (!cgroup_link) {
-            fprintf(stderr, "Failed to attach judge to cgroup\n");
+            c_log(40, "Failed to attach judge to cgroup\n");
         }
     } else {
-        fprintf(stderr, "Failed to open cgroup v2 mount\n");
+        c_log(40, "Failed to open cgroup v2 mount\n");
     }
 
-    printf("Successfully attached! Proxy is running...\n");
+    c_log(20, "Successfully attached! Proxy is running...\n");
     return 0;
 }
 
@@ -108,22 +144,24 @@ int update_port_dfa(unsigned int port, unsigned int *keys, unsigned int *values,
     if (!skel) return -1;
     
     LIBBPF_OPTS(bpf_map_create_opts, opts);
-    int inner_map_fd = bpf_map_create(BPF_MAP_TYPE_HASH, "inner_dfa", sizeof(__u32), sizeof(__u32), 8192, &opts);
+    int inner_map_fd = bpf_map_create(BPF_MAP_TYPE_HASH, "inner_dfa", sizeof(__u32), sizeof(__u32), 262144, &opts);
     if (inner_map_fd < 0) {
-        perror("bpf_map_create failed");
+        c_log(40, "bpf_map_create failed\n");
         return -1;
     }
 
     for (unsigned int i = 0; i < num_transitions; i++) {
         if (bpf_map_update_elem(inner_map_fd, &keys[i], &values[i], BPF_ANY) != 0) {
-            perror("bpf_map_update_elem inner failed");
+            c_log(40, "bpf_map_update_elem inner failed\n");
+            close(inner_map_fd);
+            return -2;
         }
     }
 
     int outer_fd = bpf_map__fd(skel->maps.dfa_map);
     int err = bpf_map_update_elem(outer_fd, &port, &inner_map_fd, BPF_ANY);
     if (err != 0) {
-        perror("bpf_map_update_elem outer failed");
+        c_log(40, "bpf_map_update_elem outer failed\n");
     }
     
     close(inner_map_fd);
@@ -145,7 +183,7 @@ int setup_ringbuf(void (*callback)(int, int, const char*)) {
     if (!rb) {
         rb = ring_buffer__new(bpf_map__fd(skel->maps.rb), handle_event, NULL, NULL);
         if (!rb) {
-            fprintf(stderr, "Failed to create ring buffer\n");
+            c_log(40, "Failed to create ring buffer\n");
             return -1;
         }
     }
@@ -188,15 +226,15 @@ void unload_ebpf()
 int main(int argc, char **argv)
 {
     enable_libbpf_logging();
-    printf("Starting standalone eBPF proxy...\n");
+    c_log(20, "Starting standalone eBPF proxy...\n");
 
     if (load_ebpf() != 0) {
-        fprintf(stderr, "Failed to load eBPF program.\n");
+        c_log(40, "Failed to load eBPF program.\n");
         return 1;
     }
 
     if (add_managed_port(1234) == 0) {
-        printf("Port 1234 added to managed_ports.\n");
+        c_log(20, "Port 1234 added to managed_ports.\n");
     }
 
     while (1) {

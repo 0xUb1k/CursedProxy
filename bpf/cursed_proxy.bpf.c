@@ -21,7 +21,7 @@ struct {
 
 struct inner_map_type {
     __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 8192);
+    __uint(max_entries, 262144);
     __type(key, __u32);
     __type(value, __u32);
 } inner_map SEC(".maps");
