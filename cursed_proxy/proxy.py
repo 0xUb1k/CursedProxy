@@ -109,7 +109,8 @@ class CursedProxy:
         raw_bytes = ctypes.string_at(payload_ptr, match_len)
         self.n_dropped[port] += 1
         matched_str = repr(raw_bytes)
-        logger.warning(
+        ebpf_logger = logging.getLogger("cursed_proxy.eBPF")
+        ebpf_logger.warning(
             f"\033[91m[DROPPED]\033[0m packet on port {port}! Matched snippet: {matched_str}"
         )
 

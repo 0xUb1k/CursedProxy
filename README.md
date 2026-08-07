@@ -8,11 +8,12 @@ Instead of routing packets to userspace, `cursed-proxy` compiles your regex rule
 Honestly? I really needed an excuse to learn how eBPF filters work, and I needed an excuse to write a TCP proxy too. This is still a fun side-project and definitely not production-tested, so use it carefully!
 
 ## TODOs
-* [ ] Change DFA compiler for faster parsing.
 * [ ] Exposing a /metrics endpoint for Prometheus.
 * [ ] Move to the traffic control layer, this makes forging packets and reading in place possible. 
 * [ ] Handle fragmented packets correctly (right now, if a payload is split across two packets like `[GET /a][dmin]`, the DFA resets and it slips through)
 * [ ] Compatibility with ipv6
+* [x] Change DFA compiler for faster parsing.
+* [x] Integrate libcursed_proxy logging into python logging.
 
 ## How to use it
 
