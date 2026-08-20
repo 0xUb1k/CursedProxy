@@ -1,6 +1,7 @@
 import ctypes
 import logging
 import os
+import socket
 import sys
 import threading
 from collections import Counter
@@ -78,7 +79,7 @@ class CursedProxy:
         self.bpf_lib.remove_managed_port.restype = ctypes.c_int
 
         # Core eBPF lifecycle
-        self.bpf_lib.load_ebpf.argtypes = []
+        self.bpf_lib.load_ebpf.argtypes = [ctypes.c_int]
         self.bpf_lib.load_ebpf.restype = ctypes.c_int
 
         self.bpf_lib.unload_ebpf.argtypes = []
@@ -118,15 +119,21 @@ class CursedProxy:
         while self.running:
             self.bpf_lib.poll_ringbuf(100)
 
-    def start(self, verbose=False):
+    def start(self, ifname="lo", verbose=False):
         if verbose:
             self.bpf_lib.enable_libbpf_logging()
             logger.info("Verbose eBPF checker logging enabled.")
         else:
             self.bpf_lib.disable_libbpf_logging()
 
-        logger.info("Loading eBPF proxy into kernel...")
-        ret = self.bpf_lib.load_ebpf()
+        try:
+            ifindex = socket.if_nametoindex(ifname)
+        except OSError:
+            logger.error(f"Interface {ifname} not found.")
+            raise RuntimeError(f"Interface {ifname} not found.")
+
+        logger.info(f"Loading eBPF proxy into kernel on interface {ifname} (index {ifindex})...")
+        ret = self.bpf_lib.load_ebpf(ifindex)
         if ret != 0:
             logger.error(f"Failed to load eBPF programm, error code: {ret}")
             raise RuntimeError(

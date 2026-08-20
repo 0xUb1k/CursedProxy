@@ -2,13 +2,16 @@
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
-
+#include <bpf/bpf_endian.h>
 #define MAX_LOG_PAYLOAD 32
 #define AF_INET 2
 
-#define PASS 1
-#define DROP 0
+#define PASS 0
+#define DROP 2
 
+#define ETH_P_IP   0x0800  // IPv4
+#define ETH_P_IPV6 0x86DD  // IPv6
+#define IPPROTO_TCP  6
 struct event {
     __u32 port;
     __u32 match_len;
@@ -40,40 +43,65 @@ struct {
     __uint(max_entries, 256);
 } managed_ports SEC(".maps");
 
-SEC("cgroup_skb/ingress")
-int judge(struct __sk_buff *ctx) {
+SEC("tc")
+int judge(struct __sk_buff *skb) {
 
-    //we do not like ipv6
-    if (ctx->family != AF_INET) return 1;
+    void *data = (void *)(long)skb->data;
+    void *data_end = (void *)(long)skb->data_end;
 
-    //casting to ipv4 and checking if it is tcp
-    struct iphdr iph;
-    if (bpf_skb_load_bytes(ctx, 0, &iph, sizeof(iph)) < 0) return 1;
-    if (iph.protocol != IPPROTO_TCP) return 1;
+    // check both eth and ip headers upfront so verifier bounds the base data pointer
+    if (data + sizeof(struct ethhdr) + sizeof(struct iphdr) > data_end)
+        return PASS;
+
+    struct ethhdr *eth = data;
+    if (eth->h_proto != bpf_htons(ETH_P_IP))
+        return PASS;
+
+    struct iphdr *iph = (void *)data + sizeof(struct ethhdr);
+    if (iph->protocol != IPPROTO_TCP)
+        return PASS; // Not TCP, pass it
     
-    __u8 *ip_bytes = (__u8 *)&iph;
-    __u32 ip_len = (ip_bytes[0] & 0x0F) * 4;
+    __u32 ip_hdr_len = iph->ihl * 4;
 
-    //casting to tcp
-    struct tcphdr tcph;
-    if (bpf_skb_load_bytes(ctx, ip_len, &tcph, sizeof(tcph)) < 0) return 1;
-    
-    __u8 *tcp_bytes = (__u8 *)&tcph;
-    __u32 tcp_len = (tcp_bytes[12] >> 4) * 4;
+    if (ip_hdr_len < sizeof(struct iphdr) || ip_hdr_len > 60)
+        return PASS;
+
+    struct tcphdr *tcph = (void *)iph + ip_hdr_len;
+    if ((void *)(tcph + 1) > data_end)
+        return PASS;
 
     //checks if the port is on of out targets
-    __u32 port = __builtin_bswap16(tcph.dest);
+    __u32 port = bpf_htons(tcph->dest);
     __u32 *is_managed = bpf_map_lookup_elem(&managed_ports, &port);
     if (!is_managed || !*is_managed) {
         return PASS; 
     }
 
-    __u32 payload_offset = ip_len + tcp_len;
-    if (ctx->len <= payload_offset) {
+    __u32 tcp_hdr_len = tcph->doff * 4;
+    if (tcp_hdr_len < sizeof(struct tcphdr) || tcp_hdr_len > 60) 
+        return PASS;
+
+    __u32 total_hdr_len = sizeof(struct ethhdr) + ip_hdr_len + tcp_hdr_len;
+
+    // at this point the packet needs to be checked, so i pull it in a 
+    // linear buffer. this is slow so we only want to do it if it is really needed.
+
+    if (bpf_skb_pull_data(skb, skb->len) < 0) {
         return PASS;
     }
-    __u32 payload_len = ctx->len - payload_offset;
 
+    data = (void *)(long)skb->data;
+    data_end = (void *)(long)skb->data_end;
+
+    __u8 *payload = data + total_hdr_len;
+    if ((void *)payload > data_end) {
+        return PASS;
+    }
+
+    __u32 payload_len = (__u8 *)data_end - payload;
+    if (payload_len > 65401) { //overkill but the checker is happy so i am happy
+        payload_len = 65401;
+    }
     __u32 current_state = 1;
     int matched = 0; 
     int i;
@@ -87,8 +115,14 @@ int judge(struct __sk_buff *ctx) {
     }
 
     bpf_for(i, 0, payload_len) {
-        //not very efficient i know, but i cant use pull_data so this is the only solution. In the future i will use TC if needed.
-        if (bpf_skb_load_bytes(ctx, payload_offset + i, &byte, 1) < 0) break;
+        void *d = (void *)(long)skb->data;
+        void *d_end = (void *)(long)skb->data_end;
+        __u8 *ptr = d + total_hdr_len + i;
+        
+        if ((void *)(ptr + 1) > d_end) {
+            break;
+        }
+        byte = *ptr;
         
         __u32 key = (current_state << 8) | byte;
         __u32 *lookup = bpf_map_lookup_elem(inner_dfa, &key);
@@ -118,12 +152,22 @@ int judge(struct __sk_buff *ctx) {
             }
             len_to_copy &= 31;
             e->match_len = len_to_copy;
+
+            void *d = (void *)(long)skb->data;
+            void *d_end = (void *)(long)skb->data_end;
+            __u8 *ptr = d + total_hdr_len;
             
-            bpf_skb_load_bytes(ctx, payload_offset, e->matched_payload, len_to_copy);
+            #pragma clang loop unroll(full)
+            for (int j = 0; j < 20; j++) {
+                if (j >= len_to_copy) break;
+                if ((void *)(ptr + j + 1) > d_end) break;
+                e->matched_payload[j] = ptr[j];
+            }
             e->matched_payload[len_to_copy] = '\0';
             
             bpf_ringbuf_submit(e, 0); 
         }
+
         return DROP;
     }
 

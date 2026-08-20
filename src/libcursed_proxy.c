@@ -7,8 +7,7 @@
 #include <fcntl.h>
 
 struct cursed_proxy_bpf *skel = NULL;
-int cgroup_fd = -1;
-struct bpf_link *cgroup_link = NULL;
+int tc_hook_ifindex = -1;
 
 struct event {
     __u32 port;
@@ -81,7 +80,7 @@ void disable_libbpf_logging() {
     libbpf_set_print(libbpf_print_fn_silent);
 }
 
-int load_ebpf()
+int load_ebpf(int ifindex)
 {
     int err;
 
@@ -99,6 +98,9 @@ int load_ebpf()
         return err;
     }
 
+    // Note: We don't use bpf__attach for TC programs usually, but if the skeleton contains
+    // other auto-attachable programs, we can keep it. However, since the program is TC,
+    // we attach it manually below.
     err = cursed_proxy_bpf__attach(skel);
     if (err) {
         c_log(40, "Failed to attach BPF skeleton (err: %d)\n", err);
@@ -107,18 +109,22 @@ int load_ebpf()
         return err;
     }
 
-    cgroup_fd = open("/sys/fs/cgroup", O_RDONLY);
-    if (cgroup_fd < 0) {
-        cgroup_fd = open("/sys/fs/cgroup/unified", O_RDONLY);
+    DECLARE_LIBBPF_OPTS(bpf_tc_hook, hook, .ifindex = ifindex, .attach_point = BPF_TC_INGRESS);
+    DECLARE_LIBBPF_OPTS(bpf_tc_opts, opts, .handle = 1, .priority = 1, .prog_fd = bpf_program__fd(skel->progs.judge));
+
+    int hook_err = bpf_tc_hook_create(&hook);
+    if (hook_err && hook_err != -EEXIST) {
+        c_log(40, "Failed to create TC hook: %d\n", hook_err);
+        return hook_err;
     }
-    if (cgroup_fd >= 0) {
-        cgroup_link = bpf_program__attach_cgroup(skel->progs.judge, cgroup_fd);
-        if (!cgroup_link) {
-            c_log(40, "Failed to attach judge to cgroup\n");
-        }
-    } else {
-        c_log(40, "Failed to open cgroup v2 mount\n");
+
+    int attach_err = bpf_tc_attach(&hook, &opts);
+    if (attach_err) {
+        c_log(40, "Failed to attach TC hook: %d\n", attach_err);
+        return attach_err;
     }
+    
+    tc_hook_ifindex = ifindex;
 
     c_log(20, "Successfully attached! Proxy is running...\n");
     return 0;
@@ -209,13 +215,12 @@ void unload_ebpf()
         ring_buffer__free(rb);
         rb = NULL;
     }
-    if (cgroup_link) {
-        bpf_link__destroy(cgroup_link);
-        cgroup_link = NULL;
-    }
-    if (cgroup_fd >= 0) {
-        close(cgroup_fd);
-        cgroup_fd = -1;
+    if (tc_hook_ifindex >= 0) {
+        DECLARE_LIBBPF_OPTS(bpf_tc_hook, hook, .ifindex = tc_hook_ifindex, .attach_point = BPF_TC_INGRESS);
+        DECLARE_LIBBPF_OPTS(bpf_tc_opts, opts, .handle = 1, .priority = 1);
+        bpf_tc_detach(&hook, &opts);
+        bpf_tc_hook_destroy(&hook);
+        tc_hook_ifindex = -1;
     }
     if (skel) {
         cursed_proxy_bpf__destroy(skel);
@@ -229,7 +234,7 @@ int main(int argc, char **argv)
     enable_libbpf_logging();
     c_log(20, "Starting standalone eBPF proxy...\n");
 
-    if (load_ebpf() != 0) {
+    if (load_ebpf(1) != 0) {
         c_log(40, "Failed to load eBPF program.\n");
         return 1;
     }
