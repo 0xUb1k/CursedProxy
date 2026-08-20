@@ -47,17 +47,18 @@ def main():
     parser.add_argument("-c", "--config", dest="config_path", default="proxy.conf", help="Path to configuration file")
     parser.add_argument("-i", "--interval", type=int, default=1, help="Config polling interval in seconds")
     parser.add_argument("-l", "--log-file", dest="log_file", default=None, help="Path to output log file")
+    parser.add_argument("-n", "--interface", dest="interface", default="lo", help="Network interface to attach to (default: lo)")
     args = parser.parse_args()
     logger = setup_logging(args.verbose, args.log_file)
 
     if os.geteuid() != 0:
         logger.warning("eBPF requires root privileges. Escalating via sudo...")
         os.execvp("sudo", ["sudo", "-E", sys.executable] + sys.argv)
-    logger.info("Starting Cursed Proxy...")
+    logger.info(f"Starting Cursed Proxy on interface {args.interface}...")
 
     proxy = CursedProxy()
     try:
-        proxy.start(verbose=args.verbose)
+        proxy.start(ifname=args.interface, verbose=args.verbose)
 
         abs_config_path = os.path.abspath(args.config_path)
         logger.info(f"Watching configuration file at: {abs_config_path}")

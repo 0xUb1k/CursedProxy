@@ -9,10 +9,12 @@ Honestly? I really needed an excuse to learn how eBPF filters work, and I needed
 
 ## TODOs
 * [ ] Exposing a /metrics endpoint for Prometheus.
-* [ ] Move to the traffic control layer, this makes forging packets and reading in place possible. 
+* [ ] Forge reset packet to stop connection
 * [ ] Handle fragmented packets correctly (right now, if a payload is split across two packets like `[GET /a][dmin]`, the DFA resets and it slips through)
 * [ ] Compatibility with ipv6
 * [ ] More regex for the same ports could be fused together
+* [ ] Compatibility with UDP
+* [x] Move to the traffic control layer, this makes forging packets and reading in place possible. 
 * [x] Change DFA compiler for faster parsing.
 * [x] Integrate libcursed_proxy logging into python logging.
 
