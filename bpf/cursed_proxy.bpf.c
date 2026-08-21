@@ -204,6 +204,107 @@ int judge(struct __sk_buff *skb) {
 
         return DROP;
 
+        // The next part was done with an LLM because i am too stupid to write
+        // a TCP packet from zero.
+
+        //rst packets dont have a payload so we will truncate the data
+        __u32 actual_payload_len = skb->len - total_hdr_len;
+        struct tcphdr *orig_tcph = data + sizeof(struct ethhdr) + ip_hdr_len;
+        if ((void *)(orig_tcph + 1) > data_end) {
+            return DROP;
+        }
+        __u32 orig_seq = bpf_ntohl(orig_tcph->seq);
+        __u32 orig_ack = bpf_ntohl(orig_tcph->ack_seq);
+        
+        //Trucnating till tcp data region (not included)
+        if (bpf_skb_change_tail(skb, 54, 0) < 0) {
+            return DROP;
+        }
+        
+        // 3. Re-derive pointers (MANDATORY after bpf_skb_change_tail)
+        void *d = (void *)(long)skb->data;
+        void *d_end = (void *)(long)skb->data_end;
+        if (d + 54 > d_end) {
+            return DROP;
+        }
+        
+        struct ethhdr *eth_new = d;
+        struct iphdr *iph_new = d + sizeof(struct ethhdr);
+        struct tcphdr *tcph_new = d + sizeof(struct ethhdr) + sizeof(struct iphdr);
+        
+        // 4. Swap MACs
+        __u8 tmp_mac[6]; // ETH_ALEN is 6
+        __builtin_memcpy(tmp_mac, eth_new->h_source, 6);
+        __builtin_memcpy(eth_new->h_source, eth_new->h_dest, 6);
+        __builtin_memcpy(eth_new->h_dest, tmp_mac, 6);
+        
+        // 5. Swap IPs and update length
+        __u32 tmp_ip = iph_new->saddr;
+        iph_new->saddr = iph_new->daddr;
+        iph_new->daddr = tmp_ip;
+        
+        iph_new->ihl = 5;
+        iph_new->tot_len = bpf_htons(40); // 20 IP + 20 TCP
+        iph_new->check = 0; 
+        
+        // Calculate IP checksum
+        __u32 ip_csum = 0;
+        __u16 *ip_ptr = (__u16 *)iph_new;
+        #pragma clang loop unroll(full)
+        for (int j = 0; j < 10; j++) {
+            ip_csum += ip_ptr[j];
+        }
+        ip_csum = (ip_csum & 0xffff) + (ip_csum >> 16);
+        ip_csum = (ip_csum & 0xffff) + (ip_csum >> 16);
+        iph_new->check = ~ip_csum;
+        
+        // 6. Swap Ports
+        __u16 tmp_port = tcph_new->source;
+        tcph_new->source = tcph_new->dest;
+        tcph_new->dest = tmp_port;
+        
+        // 7. Update TCP Flags and Sequence
+        tcph_new->doff = 5;
+        tcph_new->seq = bpf_htonl(orig_ack);
+        tcph_new->ack_seq = bpf_htonl(orig_seq + actual_payload_len);
+        
+        tcph_new->res1 = 0;
+        tcph_new->fin = 0;
+        tcph_new->syn = 0;
+        tcph_new->rst = 1;
+        tcph_new->psh = 0;
+        tcph_new->ack = 1;
+        tcph_new->urg = 0;
+        tcph_new->ece = 0;
+        tcph_new->cwr = 0;
+        
+        tcph_new->window = 0;
+        tcph_new->check = 0;
+        tcph_new->urg_ptr = 0;
+        
+        // 8. Calculate TCP Checksum
+        __u32 tcp_csum = 0;
+        // Pseudo header
+        tcp_csum += (iph_new->saddr >> 16) & 0xFFFF;
+        tcp_csum += iph_new->saddr & 0xFFFF;
+        tcp_csum += (iph_new->daddr >> 16) & 0xFFFF;
+        tcp_csum += iph_new->daddr & 0xFFFF;
+        tcp_csum += bpf_htons(IPPROTO_TCP);
+        tcp_csum += bpf_htons(20);
+        
+        // TCP header
+        __u16 *tcp_ptr = (__u16 *)tcph_new;
+        #pragma clang loop unroll(full)
+        for (int j = 0; j < 10; j++) {
+            tcp_csum += tcp_ptr[j];
+        }
+        
+        tcp_csum = (tcp_csum & 0xffff) + (tcp_csum >> 16);
+        tcp_csum = (tcp_csum & 0xffff) + (tcp_csum >> 16);
+        tcph_new->check = ~tcp_csum;
+        
+        // 9. Redirect packet out the same interface
+        return bpf_redirect(skb->ifindex, 0);
     }
 
     return PASS;
