@@ -86,26 +86,28 @@ int judge(struct __sk_buff *skb) {
     if ((void *)(tcph + 1) > data_end)
         return PASS;
 
+    // there seams to be a function called TFO that adds content to syn packets
+    // so better to check directly the flags instead of the content.
+    if (tcph->syn || tcph->rst || tcph->fin)
+        return PASS;
+
+    //take headder lenght, if it doesnt make sense pass
+    __u32 tcp_hdr_len = tcph->doff * 4;
+    if (tcp_hdr_len < sizeof(struct tcphdr) || tcp_hdr_len > 60)
+        return PASS;
+
+    //takes all hrd lenght, if it is more or equal to the size of the packet skip
+    //this should also remove all empty packets.
+    __u32 total_hdr_len = sizeof(struct ethhdr) + ip_hdr_len + tcp_hdr_len;
+    if (skb->len <= total_hdr_len)
+        return PASS;
+
     // Port check,if not present the lookup returns null
     __u32 port = bpf_htons(tcph->dest);
     __u32 *dfa_index_ptr = bpf_map_lookup_elem(&managed_ports, &port);
     if (!dfa_index_ptr) {
         return PASS;
     }
-    __u32 dfa_index = *dfa_index_ptr;
-
-    __u32 tcp_hdr_len = tcph->doff * 4;
-    if (tcp_hdr_len < sizeof(struct tcphdr) || tcp_hdr_len > 60)
-        return PASS;
-
-    // there seams to be a function called TFO that adds content to syn packets
-    // so better to check directly the flags instead of the content.
-    if (tcph->syn || tcph->rst || tcph->fin)
-        return PASS;
-
-    __u32 total_hdr_len = sizeof(struct ethhdr) + ip_hdr_len + tcp_hdr_len;
-    if (skb->len <= total_hdr_len)
-        return PASS;
 
     __u32 payload_len = skb->len - total_hdr_len;
     if (payload_len > MAX_PAYLOAD_LEN) {
@@ -117,13 +119,15 @@ int judge(struct __sk_buff *skb) {
     int i;
     __u32 match_index = 0;
 
+    __u32 dfa_index = *dfa_index_ptr;
     struct dfa_table *table = bpf_map_lookup_elem(&dfa_array, &dfa_index);
+
     if (!table) {
         return PASS;
     }
 
     //takes chunks of 256 bytes 256 times (64kb is ip max size)
-    bpf_for(i, 0, 256) {
+    bpf_for(i, 0, 128) {
         __u32 offset = total_hdr_len + (i * 256);
         if (offset >= total_hdr_len + payload_len) {
             break;
@@ -148,7 +152,7 @@ int judge(struct __sk_buff *skb) {
         }
 
         int dfa_failed = 0;
-        for (int j = 0; j < 256; j++) {
+        for (int j = 0; j < 512; j++) {
             if (j >= bytes_to_read) break;
             __u8 byte = buf[j];
 
