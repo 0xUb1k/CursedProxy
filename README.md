@@ -1,19 +1,24 @@
 # cursed-proxy
+A highly cursed, eBPF-based TCP proxy using Deterministic Finite Automata, meant for Attack & Defense CTF competitions and other buzzwords.
 
-A highly cursed, eBPF-based TCP proxy using Deterministic Finite Automata, meant for Attack & Defence CTF competitions (or just messing around with kernel stuff). 
+Instead of routing packets to userspace like a normal A&D proxy, cursed-proxy compiles your regex rules into a DFA state machine and loads them directly into the kernel. By injecting an eBPF program at the Traffic Control layer, incoming packets are evaluated before they ever touch the standard kernel TCP stack. Operating below the TCP stack and parsing its own headers makes this proxy extremely fast, bypassing userspace overhead entirely. This also has the nice side effect of making the proxy completely transparent and without requiring any application configuration or routing changes for the target service.
 
-Instead of routing packets to userspace, `cursed-proxy` compiles your regex rules into DFS and injects them directly into the Linux kernel using eBPF maps. It silently drops malicious payloads before your CTF services even know they exist. It handles iperf3 tests with 44 Gbits/sec of loopback traffic.
+The proxy can send a RST packet by dynamically rewriting the incomming packet and reversing the direction, this means that no space needs to be allocated for the new packet.
+
+## Performance
+One of the motivations about writing this proxy was to see how performant and usable a proxy like this could be, so here a few stats.
+
+![Performance Benchmark Results](./benchmark_results.png)
+
+As the graph shows, running directly in the kernel at the Traffic Control layer allows the proxy to evaluate and filter packets with virtually zero overhead. This keeps the latency nearly identical to a direct connection, completely bypassing the bottlenecks of routing packets through userspace.
 
 ## Why?
 Honestly? I really needed an excuse to learn how eBPF filters work, and I needed an excuse to write a TCP proxy too. This is still a fun side-project and definitely not production-tested, so use it carefully!
 
 ## TODOs
-* [ ] Exposing a /metrics endpoint for Prometheus.
-* [ ] Forge reset packet to stop connection
 * [ ] Handle fragmented packets correctly (right now, if a payload is split across two packets like `[GET /a][dmin]`, the DFA resets and it slips through)
-* [ ] Compatibility with ipv6
 * [ ] More regex for the same ports could be fused together
-* [ ] Compatibility with UDP
+* [x] Forge reset packet to stop connection
 * [x] Move to the traffic control layer, this makes forging packets and reading in place possible. 
 * [x] Change DFA compiler for faster parsing.
 * [x] Integrate libcursed_proxy logging into python logging.
