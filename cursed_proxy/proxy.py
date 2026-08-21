@@ -307,9 +307,18 @@ class CursedProxy:
         if num_transitions > 262144:
             logger.error(
                 f"Failed to add regex '{regex_string}' to port {port}: "
-                f"Regex is too complex ({num_transitions} transitions) and exceeds the eBPF map capacity (262144)."
+                f"Regex is too complex ({num_transitions} transitions) and exceeds the maximum allowed (262144)."
             )
             return
+
+        if keys:
+            max_key = max(keys)
+            if max_key >= 262144:
+                logger.error(
+                    f"Failed to add regex '{regex_string}' to port {port}: "
+                    f"Regex is too complex (max key {max_key}) and exceeds the eBPF array map capacity (262144)."
+                )
+                return
 
         keys_array = (ctypes.c_uint * num_transitions)(*keys)
         values_array = (ctypes.c_uint * num_transitions)(*values)
