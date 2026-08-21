@@ -118,6 +118,12 @@ int load_ebpf(int ifindex)
         return hook_err;
     }
 
+    DECLARE_LIBBPF_OPTS(bpf_tc_opts, query_opts, .handle = 1, .priority = 1);
+    if (bpf_tc_query(&hook, &query_opts) == 0) {
+        c_log(40, "A judge filter is already attached to this interface!\n");
+        return -EEXIST;
+    }
+
     int attach_err = bpf_tc_attach(&hook, &opts);
     if (attach_err) {
         c_log(40, "Failed to attach TC hook: %d\n", attach_err);
@@ -130,11 +136,56 @@ int load_ebpf(int ifindex)
     return 0;
 }
 
+struct dfa_table {
+    __u32 transitions[262144];
+};
+
+static int port_to_index[65536];
+static int index_in_use[256];
+static int globals_initialized = 0;
+
+static void init_globals() {
+    if (!globals_initialized) {
+        for (int i = 0; i < 65536; i++) port_to_index[i] = -1;
+        for (int i = 0; i < 256; i++) index_in_use[i] = 0;
+        globals_initialized = 1;
+    }
+}
+
+static int allocate_index(unsigned int port) {
+    init_globals();
+    if (port < 65536 && port_to_index[port] != -1) return port_to_index[port];
+    for (int i = 0; i < 256; i++) {
+        if (!index_in_use[i]) {
+            index_in_use[i] = 1;
+            if (port < 65536) port_to_index[port] = i;
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void free_index(unsigned int port) {
+    init_globals();
+    if (port < 65536) {
+        int idx = port_to_index[port];
+        if (idx != -1) {
+            index_in_use[idx] = 0;
+            port_to_index[port] = -1;
+        }
+    }
+}
+
 int add_managed_port(unsigned int port)
 {
     if (!skel) return -1;
-    unsigned int val = 1;
+    int idx = allocate_index(port);
+    if (idx == -1) {
+        c_log(40, "No free DFA indices available\n");
+        return -1;
+    }
     int fd = bpf_map__fd(skel->maps.managed_ports);
+    unsigned int val = idx;
     return bpf_map_update_elem(fd, &port, &val, BPF_ANY);
 }
 
@@ -142,43 +193,55 @@ int remove_managed_port(unsigned int port)
 {
     if (!skel) return -1;
     int fd = bpf_map__fd(skel->maps.managed_ports);
-    return bpf_map_delete_elem(fd, &port);
+    int ret = bpf_map_delete_elem(fd, &port);
+    free_index(port);
+    return ret;
 }
 
 int update_port_dfa(unsigned int port, unsigned int *keys, unsigned int *values, unsigned int num_transitions)
 {
     if (!skel) return -1;
     
-    LIBBPF_OPTS(bpf_map_create_opts, opts);
-    int inner_map_fd = bpf_map_create(BPF_MAP_TYPE_HASH, "inner_dfa", sizeof(__u32), sizeof(__u32), 262144, &opts);
-    if (inner_map_fd < 0) {
-        c_log(40, "bpf_map_create failed\n");
+    int idx = allocate_index(port);
+    if (idx == -1) {
+        c_log(40, "No free DFA indices available\n");
         return -1;
     }
 
+    struct dfa_table *table = malloc(sizeof(struct dfa_table));
+    if (!table) {
+        c_log(40, "Failed to allocate DFA table memory\n");
+        return -1;
+    }
+    memset(table, 0, sizeof(struct dfa_table));
+
     for (unsigned int i = 0; i < num_transitions; i++) {
-        if (bpf_map_update_elem(inner_map_fd, &keys[i], &values[i], BPF_ANY) != 0) {
-            c_log(40, "bpf_map_update_elem inner failed\n");
-            close(inner_map_fd);
-            return -2;
+        unsigned int key = keys[i];
+        if (key < 262144) {
+            table->transitions[key] = values[i];
         }
     }
 
-    int outer_fd = bpf_map__fd(skel->maps.dfa_map);
-    int err = bpf_map_update_elem(outer_fd, &port, &inner_map_fd, BPF_ANY);
+    int fd = bpf_map__fd(skel->maps.dfa_array);
+    unsigned int map_idx = idx;
+    int err = bpf_map_update_elem(fd, &map_idx, table, BPF_ANY);
     if (err != 0) {
-        c_log(40, "bpf_map_update_elem outer failed\n");
+        c_log(40, "bpf_map_update_elem dfa_array failed\n");
     }
+    free(table);
     
-    close(inner_map_fd);
+    // Proactively update managed_ports so the index is linked
+    int m_fd = bpf_map__fd(skel->maps.managed_ports);
+    bpf_map_update_elem(m_fd, &port, &map_idx, BPF_ANY);
+
     return err;
 }
 
 int remove_port_dfa(unsigned int port)
 {
     if (!skel) return -1;
-    int fd = bpf_map__fd(skel->maps.dfa_map);
-    return bpf_map_delete_elem(fd, &port);
+    free_index(port);
+    return 0;
 }
 
 int setup_ringbuf(void (*callback)(int, int, const char*)) {
@@ -218,6 +281,9 @@ void unload_ebpf()
     if (tc_hook_ifindex >= 0) {
         DECLARE_LIBBPF_OPTS(bpf_tc_hook, hook, .ifindex = tc_hook_ifindex, .attach_point = BPF_TC_INGRESS);
         DECLARE_LIBBPF_OPTS(bpf_tc_opts, opts, .handle = 1, .priority = 1);
+        if (skel) {
+            opts.prog_fd = bpf_program__fd(skel->progs.judge);
+        }
         bpf_tc_detach(&hook, &opts);
         bpf_tc_hook_destroy(&hook);
         tc_hook_ifindex = -1;

@@ -5,6 +5,12 @@
 #include <bpf/bpf_endian.h>
 #define MAX_LOG_PAYLOAD 32
 #define AF_INET 2
+#define MAX_FILTERS 256
+#define MAX_TRANSITIONS 262144
+
+//the biggest ip packet is max 65545 bytes long, minus the headders (134 bytes max) we get
+//this value.
+#define MAX_PAYLOAD_LEN 65401
 
 #define PASS 0
 #define DROP 2
@@ -12,6 +18,8 @@
 #define ETH_P_IP   0x0800  // IPv4
 #define ETH_P_IPV6 0x86DD  // IPv6
 #define IPPROTO_TCP  6
+
+//Structs for logging handling, the ringbuf is connected to a callback in libcursedproxy.
 struct event {
     __u32 port;
     __u32 match_len;
@@ -22,24 +30,29 @@ struct {
     __uint(max_entries, 256 * 1024);
 } rb SEC(".maps");
 
-struct inner_map_type {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 262144);
-    __type(key, __u32);
-    __type(value, __u32);
-} inner_map SEC(".maps");
+//== Structs for DFA handling ==
 
+//dfa_table stores the single transitions, this takes a lot of memory
+//so i need to check if a hashmap even if less efficient could be better.
+struct dfa_table {
+    __u32 transitions[MAX_TRANSITIONS];
+};
+
+//contains the dfa_tables associated with an index
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH_OF_MAPS);
-    __uint(max_entries, 256);
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, MAX_FILTERS);
     __type(key, __u32);
-    __array(values, struct inner_map_type);
-} dfa_map SEC(".maps");
+    __type(value, struct dfa_table);
+} dfa_array SEC(".maps");
 
+//contains the single ports and an index.
+//in the future i should implement a way to connect more ports to the same 
+//array index reusing dfas.
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __type(key, __u32);    //port
-    __type(value, __u32); // 1 = true, 0 = false 
+    __type(value, __u32); // index into dfa_array 
     __uint(max_entries, 256);
 } managed_ports SEC(".maps");
 
@@ -49,93 +62,117 @@ int judge(struct __sk_buff *skb) {
     void *data = (void *)(long)skb->data;
     void *data_end = (void *)(long)skb->data_end;
 
-    // check both eth and ip headers upfront so verifier bounds the base data pointer
+    // sanity check to make the checker happy
     if (data + sizeof(struct ethhdr) + sizeof(struct iphdr) > data_end)
         return PASS;
 
+    //making eth headder
     struct ethhdr *eth = data;
     if (eth->h_proto != bpf_htons(ETH_P_IP))
         return PASS;
 
+    //making ip headder
     struct iphdr *iph = (void *)data + sizeof(struct ethhdr);
     if (iph->protocol != IPPROTO_TCP)
-        return PASS; // Not TCP, pass it
-    
+        return PASS;
+   
+    //ihl is in words, so to know the bytes it needs to be multiplied
     __u32 ip_hdr_len = iph->ihl * 4;
-
-    if (ip_hdr_len < sizeof(struct iphdr) || ip_hdr_len > 60)
+    if (ip_hdr_len < sizeof(struct iphdr) || ip_hdr_len > 60) //a ip headder cannot be bigger then 60 bytes
         return PASS;
 
+    //making tcp headder
     struct tcphdr *tcph = (void *)iph + ip_hdr_len;
     if ((void *)(tcph + 1) > data_end)
         return PASS;
 
-    //checks if the port is on of out targets
+    // Port check,if not present the lookup returns null
     __u32 port = bpf_htons(tcph->dest);
-    __u32 *is_managed = bpf_map_lookup_elem(&managed_ports, &port);
-    if (!is_managed || !*is_managed) {
-        return PASS; 
+    __u32 *dfa_index_ptr = bpf_map_lookup_elem(&managed_ports, &port);
+    if (!dfa_index_ptr) {
+        return PASS;
     }
+    __u32 dfa_index = *dfa_index_ptr;
 
     __u32 tcp_hdr_len = tcph->doff * 4;
-    if (tcp_hdr_len < sizeof(struct tcphdr) || tcp_hdr_len > 60) 
+    if (tcp_hdr_len < sizeof(struct tcphdr) || tcp_hdr_len > 60)
+        return PASS;
+
+    // there seams to be a function called TFO that adds content to syn packets
+    // so better to check directly the flags instead of the content.
+    if (tcph->syn || tcph->rst || tcph->fin)
         return PASS;
 
     __u32 total_hdr_len = sizeof(struct ethhdr) + ip_hdr_len + tcp_hdr_len;
-
-    // at this point the packet needs to be checked, so i pull it in a 
-    // linear buffer. this is slow so we only want to do it if it is really needed.
-
-    if (bpf_skb_pull_data(skb, skb->len) < 0) {
+    if (skb->len <= total_hdr_len)
         return PASS;
-    }
 
-    data = (void *)(long)skb->data;
-    data_end = (void *)(long)skb->data_end;
-
-    __u8 *payload = data + total_hdr_len;
-    if ((void *)payload > data_end) {
-        return PASS;
+    __u32 payload_len = skb->len - total_hdr_len;
+    if (payload_len > MAX_PAYLOAD_LEN) {
+        payload_len = MAX_PAYLOAD_LEN;
     }
-
-    __u32 payload_len = (__u8 *)data_end - payload;
-    if (payload_len > 65401) { //overkill but the checker is happy so i am happy
-        payload_len = 65401;
-    }
+    
     __u32 current_state = 1;
     int matched = 0; 
     int i;
     __u32 match_index = 0;
-    __u8 byte;
 
-    // DFA map, this could be improved, maybe multiple ports use the same DFA if they can or something
-    void *inner_dfa = bpf_map_lookup_elem(&dfa_map, &port);
-    if (!inner_dfa) {
+    struct dfa_table *table = bpf_map_lookup_elem(&dfa_array, &dfa_index);
+    if (!table) {
         return PASS;
     }
 
-    bpf_for(i, 0, payload_len) {
-        void *d = (void *)(long)skb->data;
-        void *d_end = (void *)(long)skb->data_end;
-        __u8 *ptr = d + total_hdr_len + i;
-        
-        if ((void *)(ptr + 1) > d_end) {
+    //takes chunks of 256 bytes 256 times (64kb is ip max size)
+    bpf_for(i, 0, 256) {
+        __u32 offset = total_hdr_len + (i * 256);
+        if (offset >= total_hdr_len + payload_len) {
             break;
         }
-        byte = *ptr;
-        
-        __u32 key = (current_state << 8) | byte;
-        __u32 *lookup = bpf_map_lookup_elem(inner_dfa, &key);
-        
-        if (lookup) {
-            __u32 val = *lookup;
+
+        __u32 remaining = total_hdr_len + payload_len - offset;
+        // I had to add volatile because clang is too smart for its own
+        // good and optimized away the sanity checks below. The checker
+        // is stupid as f
+        volatile __u32 please_let_me_be = remaining;
+        __u32 bytes_to_read = please_let_me_be;
+        if (bytes_to_read > 256) {
+            bytes_to_read = 256;
+        }
+        if (bytes_to_read == 0) {
+            break;
+        }
+
+        __u8 buf[256];
+        if (bpf_skb_load_bytes(skb, offset, buf, bytes_to_read) < 0) {
+            break;
+        }
+
+        int dfa_failed = 0;
+        for (int j = 0; j < 256; j++) {
+            if (j >= bytes_to_read) break;
+            __u8 byte = buf[j];
+
+            __u32 key = (current_state << 8) | byte;
+            if (key >= MAX_TRANSITIONS) {
+                dfa_failed = 1;
+                break;
+            }
+
+            __u32 val = table->transitions[key];
+            if (val == 0) {
+                dfa_failed = 1;
+                break;
+            }
+
             current_state = val & 0x7FFFFFFF;
             if (val & 0x80000000) {
                 matched = 1;
-                match_index = i;
+                match_index = (i * 256) + j;
                 break;
             }
-        } else {
+        }
+
+        if (dfa_failed || matched) {
             break;
         }
     }
@@ -153,15 +190,12 @@ int judge(struct __sk_buff *skb) {
             len_to_copy &= 31;
             e->match_len = len_to_copy;
 
-            void *d = (void *)(long)skb->data;
-            void *d_end = (void *)(long)skb->data_end;
-            __u8 *ptr = d + total_hdr_len;
-            
-            #pragma clang loop unroll(full)
+            __builtin_memset(e->matched_payload, 0, MAX_LOG_PAYLOAD);
             for (int j = 0; j < 20; j++) {
                 if (j >= len_to_copy) break;
-                if ((void *)(ptr + j + 1) > d_end) break;
-                e->matched_payload[j] = ptr[j];
+                __u8 byte = 0;
+                bpf_skb_load_bytes(skb, total_hdr_len + j, &byte, 1);
+                e->matched_payload[j] = byte;
             }
             e->matched_payload[len_to_copy] = '\0';
             
@@ -169,6 +203,7 @@ int judge(struct __sk_buff *skb) {
         }
 
         return DROP;
+
     }
 
     return PASS;
