@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 import time
+import signal
 
 from cursed_proxy.log import setup_logging
 from cursed_proxy.proxy import CursedProxy
@@ -50,6 +51,12 @@ def main():
     parser.add_argument("-n", "--interface", dest="interface", default="lo", help="Network interface to attach to (default: lo)")
     args = parser.parse_args()
     logger = setup_logging(args.verbose, args.log_file)
+
+    def handle_sigterm(signum, frame):
+        logger.info("Received SIGTERM, initiating shutdown...")
+        sys.exit(0)
+        
+    signal.signal(signal.SIGTERM, handle_sigterm)
 
     if os.geteuid() != 0:
         logger.warning("eBPF requires root privileges. Escalating via sudo...")
