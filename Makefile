@@ -46,4 +46,8 @@ test-integration: all
 	@echo "  TEST     Integration tests (requires root)"
 	sudo PYTHONPATH=packages/cursed_proxy:packages/cursed_engine .venv/bin/pytest packages/cursed_engine/tests/test_ebpf_integration.py
 
-.PHONY: all clean test test-integration
+bench: all
+	@echo "  BENCH    Running benchmark (requires root)"
+	sudo PYTHONPATH=packages/cursed_proxy:packages/cursed_engine .venv/bin/python packages/cursed_proxy/tests/benchmark.py $(BENCH_ARGS)
+
+.PHONY: all clean test test-integration bench
