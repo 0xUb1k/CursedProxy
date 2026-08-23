@@ -49,7 +49,7 @@ class CursedEngine:
         self.EVENT_CALLBACK_TYPE = ctypes.CFUNCTYPE(
             None, ctypes.c_int, ctypes.c_int, ctypes.c_void_p
         )
-        self.c_event_callback = self.CALLBACK_TYPE(self._event_callback)
+        self.c_event_callback = self.EVENT_CALLBACK_TYPE(self._event_callback)
 
         self.bpf_lib.setup_ringbuf.argtypes = [self.EVENT_CALLBACK_TYPE]
         self.bpf_lib.setup_ringbuf.restype = ctypes.c_int

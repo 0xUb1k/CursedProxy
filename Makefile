@@ -38,4 +38,12 @@ $(SHARED_LIB): $(C_SRCS) $(BPF_SKEL)
 clean:
 	rm -f $(VMLINUX) $(BPF_OBJ) $(BPF_SKEL) $(SHARED_LIB)
 
-.PHONY: all clean
+test: all
+	@echo "  TEST     Unit tests"
+	PYTHONPATH=packages/cursed_proxy:packages/cursed_engine uv run pytest packages/cursed_proxy/tests/test_proxy.py packages/cursed_engine/tests/test_engine.py
+
+test-integration: all
+	@echo "  TEST     Integration tests (requires root)"
+	sudo PYTHONPATH=packages/cursed_proxy:packages/cursed_engine .venv/bin/pytest packages/cursed_engine/tests/test_ebpf_integration.py
+
+.PHONY: all clean test test-integration

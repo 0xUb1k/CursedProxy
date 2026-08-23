@@ -61,7 +61,7 @@ def ebpf_proxy():
     if os.geteuid() != 0:
         pytest.skip("Integration tests require root privileges")
 
-    proxy = CursedEngine(ebpf_path=ebpf_path)
+    proxy = CursedEngine()
     proxy.start(verbose=False)
     proxy.sync_config({PORT: ".*DROPME.*"})
 
@@ -155,4 +155,58 @@ def test_big_payload_no_bypass(setup_echo_server, ebpf_proxy):
     
     # The proxy dropped it, so the userspace socket will timeout or return empty
     assert response in (None, b'')
+
+def test_dynamic_regex_update(setup_echo_server, ebpf_proxy):
+    # Test that updating the regex works correctly
+    ebpf_proxy.sync_config({PORT: ".*APPLES.*"})
+    time.sleep(1)
+    
+    # APPLES should be dropped
+    assert send_payload(b"I love APPLES") in (None, b'')
+    # ORANGES should pass
+    assert send_payload(b"I love ORANGES") == b"I love ORANGES"
+    
+    # Update config
+    ebpf_proxy.sync_config({PORT: ".*ORANGES.*"})
+    time.sleep(1)
+    
+    # Now APPLES should pass
+    assert send_payload(b"I love APPLES") == b"I love APPLES"
+    # And ORANGES should be dropped
+    assert send_payload(b"I love ORANGES") in (None, b'')
+
+def test_dynamic_regex_removal(setup_echo_server, ebpf_proxy):
+    # Setup dropping regex
+    ebpf_proxy.sync_config({PORT: ".*BANANAS.*"})
+    time.sleep(1)
+    assert send_payload(b"I hate BANANAS") in (None, b'')
+    
+    # Remove all config
+    ebpf_proxy.sync_config({})
+    time.sleep(1)
+    
+    # Now the exact same payload should pass
+    payload = b"I hate BANANAS"
+    assert send_payload(payload) == payload
+
+def test_short_payload(setup_echo_server, ebpf_proxy):
+    # Edge case: Payload is extremely short, exact match of regex
+    ebpf_proxy.sync_config({PORT: "BAD"})
+    time.sleep(1)
+    
+    # Exactly matching string
+    assert send_payload(b"BAD") in (None, b'')
+    
+    # Smaller string (should pass)
+    assert send_payload(b"BA") == b"BA"
+
+def test_case_sensitivity(setup_echo_server, ebpf_proxy):
+    ebpf_proxy.sync_config({PORT: ".*SECRET.*"})
+    time.sleep(1)
+    
+    # Exact match drops
+    assert send_payload(b"this is a SECRET") in (None, b'')
+    
+    # Case mismatch passes (since regex is case sensitive by default)
+    assert send_payload(b"this is a secret") == b"this is a secret"
 
