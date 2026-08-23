@@ -10,21 +10,19 @@ from functools import lru_cache
 import interegular
 
 
-from cursed_proxy.log import Spinner
-
 logger = logging.getLogger(__name__)
 
 
-class CursedProxy:
+class CursedEngine:
     def __init__(self, ebpf_path=None):
         if ebpf_path is None:
             current_dir = os.path.dirname(os.path.abspath(__file__))
-            ebpf_path = os.path.join(current_dir, "libcursed_proxy.so")
+            ebpf_path = os.path.join(current_dir, "libcursed_engine.so")
         try:
             self.bpf_lib = ctypes.CDLL(ebpf_path)
         except OSError:
             logger.error(
-                f"libcursed_proxy.so was not found at {ebpf_path}, did you run make?"
+                f"libcursed_engine.so was not found at {ebpf_path}, did you run make?"
             )
             sys.exit()
 
@@ -35,22 +33,25 @@ class CursedProxy:
         self.n_dropped = Counter()
 
         self._configure_ctypes_signatures()
+
+        #i start the logging callback immediatly as it is in userspace
+        #the event one must be started only after start.
         self.bpf_lib.setup_c_logging(self.c_log_callback)
 
     def _configure_ctypes_signatures(self):
-        # Logging bindings
+        # Logging callback bindings
         self.LOG_CALLBACK_TYPE = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p)
         self.c_log_callback = self.LOG_CALLBACK_TYPE(self._c_log_callback)
         self.bpf_lib.setup_c_logging.argtypes = [self.LOG_CALLBACK_TYPE]
         self.bpf_lib.setup_c_logging.restype = None
 
-        # Ringbuf polling bindings
-        self.CALLBACK_TYPE = ctypes.CFUNCTYPE(
+        # Event callback bindings
+        self.EVENT_CALLBACK_TYPE = ctypes.CFUNCTYPE(
             None, ctypes.c_int, ctypes.c_int, ctypes.c_void_p
         )
-        self.c_callback = self.CALLBACK_TYPE(self._ringbuf_callback)
+        self.c_event_callback = self.CALLBACK_TYPE(self._event_callback)
 
-        self.bpf_lib.setup_ringbuf.argtypes = [self.CALLBACK_TYPE]
+        self.bpf_lib.setup_ringbuf.argtypes = [self.EVENT_CALLBACK_TYPE]
         self.bpf_lib.setup_ringbuf.restype = ctypes.c_int
 
         self.bpf_lib.poll_ringbuf.argtypes = [ctypes.c_int]
@@ -106,7 +107,7 @@ class CursedProxy:
         else:
             ebpf_logger.error(msg_str)
 
-    def _ringbuf_callback(self, port, match_len, payload_ptr):
+    def _event_callback(self, port, match_len, payload_ptr):
         raw_bytes = ctypes.string_at(payload_ptr, match_len)
         self.n_dropped[port] += 1
         matched_str = repr(raw_bytes)
@@ -141,7 +142,7 @@ class CursedProxy:
             )
         logger.info("eBPF proxy loaded successfully.")
 
-        if self.bpf_lib.setup_ringbuf(self.c_callback) != 0:
+        if self.bpf_lib.setup_ringbuf(self.c_event_callback) != 0:
             logger.error("Failed to setup BPF ring buffer!")
 
         self.running = True
@@ -224,71 +225,71 @@ class CursedProxy:
         logger.info(f"Compiling regex pattern: {regex_pattern}, this may take a while...")
 
         try:
-            with Spinner("Parsing pattern"):
-                pattern = interegular.parse_pattern(regex_pattern)
+            logger.info("Parsing pattern...")
+            pattern = interegular.parse_pattern(regex_pattern)
 
-            with Spinner("Reducing to DFA and minimizing"):
-                fsm = pattern.to_fsm()
+            logger.info("Reducing to DFA and minimizing...")
+            fsm = pattern.to_fsm()
         except Exception as e:
             logger.error(f"Failed to compile regex '{regex_pattern}': {type(e).__name__}")
             return None, None
         
-        with Spinner("Mapping states for eBPF consumption..."):
-            states = list(fsm.states)
-            state_to_idx = {state: i for i, state in enumerate(states)}
+        logger.info("Mapping states for eBPF consumption...")
+        states = list(fsm.states)
+        state_to_idx = {state: i for i, state in enumerate(states)}
+        
+        fsm_start_idx = state_to_idx[fsm.initial]
+      
+        # this shifts everything so that 1 is the start state and all the rest comes after 
+        # {real_state: state_we_want}
+        state_mapping = {fsm_start_idx: 1}
+        next_id = 2
+        for s in range(len(states)):
+            if s != fsm_start_idx:
+                state_mapping[s] = next_id
+                next_id += 1
+        
+        accept_indices = {state_to_idx[s] for s in fsm.finals}
+     
+        #this lib uses symbols that work as eq-classes. so we need to unpack it in somethin
+        # usable
+        byte_to_symbol = {}
+        anything_else_sym = None
+        for symbol_id, chars in fsm.alphabet._by_transition.items():
+            for char in chars:
+                if char == interegular.fsm.anything_else:
+                    anything_else_sym = symbol_id
+                else:
+                    byte_to_symbol[ord(char)] = symbol_id
+
+        for b in range(256):
+            if b not in byte_to_symbol and anything_else_sym is not None:
+                byte_to_symbol[b] = anything_else_sym
+
+        keys = []
+        values = []
+
+        for state, transitions in fsm.map.items():
+            src_idx = state_to_idx[state]
+            mapped_src = state_mapping[src_idx]
             
-            fsm_start_idx = state_to_idx[fsm.initial]
-          
-            # this shifts everything so that 1 is the start state and all the rest comes after 
-            # {real_state: state_we_want}
-            state_mapping = {fsm_start_idx: 1}
-            next_id = 2
-            for s in range(len(states)):
-                if s != fsm_start_idx:
-                    state_mapping[s] = next_id
-                    next_id += 1
-            
-            accept_indices = {state_to_idx[s] for s in fsm.finals}
-         
-            #this lib uses symbols that work as eq-classes. so we need to unpack it in somethin
-            # usable
-            byte_to_symbol = {}
-            anything_else_sym = None
-            for symbol_id, chars in fsm.alphabet._by_transition.items():
-                for char in chars:
-                    if char == interegular.fsm.anything_else:
-                        anything_else_sym = symbol_id
-                    else:
-                        byte_to_symbol[ord(char)] = symbol_id
-
-            for b in range(256):
-                if b not in byte_to_symbol and anything_else_sym is not None:
-                    byte_to_symbol[b] = anything_else_sym
-
-            keys = []
-            values = []
-
-            for state, transitions in fsm.map.items():
-                src_idx = state_to_idx[state]
-                mapped_src = state_mapping[src_idx]
+            for byte_val in range(256):
+                sym_id = byte_to_symbol.get(byte_val)
                 
-                for byte_val in range(256):
-                    sym_id = byte_to_symbol.get(byte_val)
+                if sym_id is not None and sym_id in transitions:
+                    target_state = transitions[sym_id]
+                    target_idx = state_to_idx[target_state]
+                    mapped_dst = state_mapping[target_idx]
                     
-                    if sym_id is not None and sym_id in transitions:
-                        target_state = transitions[sym_id]
-                        target_idx = state_to_idx[target_state]
-                        mapped_dst = state_mapping[target_idx]
+                    val = mapped_dst
+                    if target_idx in accept_indices:
+                        val |= 0x80000000
                         
-                        val = mapped_dst
-                        if target_idx in accept_indices:
-                            val |= 0x80000000
-                            
-                        key = (mapped_src << 8) | byte_val
-                        keys.append(key)
-                        values.append(val)
+                    key = (mapped_src << 8) | byte_val
+                    keys.append(key)
+                    values.append(val)
                                             
-            return keys, values
+        return keys, values
 
     def add_regex(self, port: int, regex_string: str):
         hits_before = self.compile_regex.cache_info().hits

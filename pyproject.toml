@@ -1,26 +1,2 @@
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
-
-[project]
-name = "cursed-proxy"
-version = "1.0.0"
-description = "eBPF based TCP proxy using Deterministc Finite Automata"
-requires-python = ">=3.8"
-dependencies = [
-    "cycler>=0.12.1",
-    "interegular>=0.3.3",
-]
-
-[project.scripts]
-cursed-proxy = "cursed_proxy.__main__:main"
-
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["cursed_proxy*"]
-
-[tool.setuptools.package-data]
-"cursed_proxy" = ["libcursed_proxy.so"]
-
-[project.optional-dependencies]
-dev = ["pytest", "matplotlib", "iperf3"]
+[tool.uv.workspace]
+members = ["packages/*"]

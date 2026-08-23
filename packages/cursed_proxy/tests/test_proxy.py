@@ -8,15 +8,19 @@ from cursed_proxy.proxy import CursedProxy
 
 @pytest.fixture
 def mock_proxy():
-    # Mock ctypes.CDLL to avoid loading the real library and needing root
-    with patch("ctypes.CDLL"):
-        proxy = CursedProxy("/mock/path/libcursed_proxy.so")
+    # Mock CursedEngine to avoid loading the real library and needing root
+    with patch("cursed_proxy.proxy.CursedEngine") as MockEngine:
+        mock_engine_instance = MockEngine.return_value
         # Setup mock return values for success
-        proxy.bpf_lib.load_ebpf.return_value = 0
-        proxy.bpf_lib.add_managed_port.return_value = 0
-        proxy.bpf_lib.remove_managed_port.return_value = 0
-        proxy.bpf_lib.update_port_dfa.return_value = 0
-        proxy.bpf_lib.remove_port_dfa.return_value = 0
+        mock_engine_instance.load_ebpf.return_value = 0
+        mock_engine_instance.add_managed_port.return_value = 0
+        mock_engine_instance.remove_managed_port.return_value = 0
+        mock_engine_instance.update_port_dfa.return_value = 0
+        mock_engine_instance.remove_port_dfa.return_value = 0
+        
+        # We need to make compile_regex return a valid tuple since CursedProxy delegates to it
+        # Wait, CursedProxy just delegates everything to engine.
+        proxy = CursedProxy("/mock/path/libcursed_proxy.so")
         yield proxy
 
 

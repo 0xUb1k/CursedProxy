@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from cursed_proxy.proxy import CursedProxy
+from cursed_engine.engine import CursedEngine
 
 PORT = 54321
 
@@ -61,7 +61,7 @@ def ebpf_proxy():
     if os.geteuid() != 0:
         pytest.skip("Integration tests require root privileges")
 
-    proxy = CursedProxy()
+    proxy = CursedEngine(ebpf_path=ebpf_path)
     proxy.start(verbose=False)
     proxy.sync_config({PORT: ".*DROPME.*"})
 

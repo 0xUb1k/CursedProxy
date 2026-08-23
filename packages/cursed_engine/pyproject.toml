@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cursed-engine"
+version = "1.0.0"
+description = "eBPF based matching engine using Deterministc Finite Automata"
+requires-python = ">=3.8"
+dependencies = [
+    "interegular>=0.3.3",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["cursed_engine*"]
+
+[tool.setuptools.package-data]
+"cursed_engine" = ["libcursed_engine.so"]
+
+[project.optional-dependencies]
+dev = ["pytest"]

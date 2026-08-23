@@ -54,6 +54,10 @@ class ColorFormatter(logging.Formatter):
 
         if record.name == "cursed_proxy.eBPF":
             name_colored = f"\033[94m[eBPF]\033[0m"  # Blue for eBPF
+        elif "engine" in record.name and record.name != "cursed_engine":
+            name_colored = (
+                f"\033[96m[{record.name.split('.')[-1]}]\033[0m"
+            )
         elif "proxy" in record.name and record.name != "cursed_proxy":
             name_colored = (
                 f"\033[96m[{record.name.split('.')[-1]}]\033[0m"  # Cyan for core proxy
@@ -84,7 +88,9 @@ class PlainFormatter(logging.Formatter):
     def format(self, record):
         prefix = self.PREFIXES.get(record.levelno, "[?]")
         
-        if "proxy" in record.name and record.name != "cursed_proxy":
+        if "engine" in record.name and record.name != "cursed_engine":
+            name_plain = f"[{record.name.split('.')[-1]}]"
+        elif "proxy" in record.name and record.name != "cursed_proxy":
             name_plain = f"[{record.name.split('.')[-1]}]"
         else:
             name_plain = "[main]"
@@ -103,18 +109,26 @@ class PlainFormatter(logging.Formatter):
 
 def setup_logging(verbose=False, log_file=None):
     logger = logging.getLogger("cursed_proxy")
-    logger.setLevel(logging.DEBUG if verbose else logging.INFO)
+    engine_logger = logging.getLogger("cursed_engine")
+    
+    level = logging.DEBUG if verbose else logging.INFO
+    logger.setLevel(level)
+    engine_logger.setLevel(level)
+    
     logger.propagate = False
+    engine_logger.propagate = False
     
     # Console handler
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(ColorFormatter())
     logger.addHandler(console_handler)
+    engine_logger.addHandler(console_handler)
     
     # File handler
     if log_file:
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(PlainFormatter())
         logger.addHandler(file_handler)
+        engine_logger.addHandler(file_handler)
         
     return logger

@@ -6,14 +6,14 @@ CFLAGS = -g -O2 -Wall -fPIC
 LDFLAGS = -shared -lbpf -lelf -lz
 BPF_CFLAGS = -g -O2 -target bpf
 
-BPF_DIR = bpf
-SRC_DIR = src
-PY_DIR = cursed_proxy
+BPF_DIR = packages/cursed_engine/bpf
+SRC_DIR = packages/cursed_engine/src
+PY_DIR = packages/cursed_engine/cursed_engine
 
 VMLINUX = $(BPF_DIR)/vmlinux.h
-BPF_OBJ = $(BPF_DIR)/cursed_proxy.bpf.o
-BPF_SKEL = $(BPF_DIR)/cursed_proxy.skel.h
-SHARED_LIB = $(PY_DIR)/libcursed_proxy.so
+BPF_OBJ = $(BPF_DIR)/cursed_engine.bpf.o
+BPF_SKEL = $(BPF_DIR)/cursed_engine.skel.h
+SHARED_LIB = $(PY_DIR)/libcursed_engine.so
 
 all: $(SHARED_LIB)
 
@@ -21,7 +21,7 @@ $(VMLINUX):
 	@echo "  GEN      $@"
 	$(BPFTOOL) btf dump file /sys/kernel/btf/vmlinux format c > $@
 
-$(BPF_OBJ): $(BPF_DIR)/cursed_proxy.bpf.c $(VMLINUX)
+$(BPF_OBJ): $(BPF_DIR)/cursed_engine.bpf.c $(VMLINUX)
 	@echo "  CLANG    $@"
 	$(CLANG) $(BPF_CFLAGS) -I$(BPF_DIR) -c $< -o $@
 
@@ -29,9 +29,11 @@ $(BPF_SKEL): $(BPF_OBJ)
 	@echo "  GEN-SKEL $@"
 	$(BPFTOOL) gen skeleton $< > $@
 
-$(SHARED_LIB): $(SRC_DIR)/libcursed_proxy.c $(BPF_SKEL)
+C_SRCS = $(wildcard $(SRC_DIR)/*.c)
+
+$(SHARED_LIB): $(C_SRCS) $(BPF_SKEL)
 	@echo "  CC       $@"
-	$(CC) $(CFLAGS) -I$(BPF_DIR) $< -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) -I$(BPF_DIR) $(C_SRCS) -o $@ $(LDFLAGS)
 
 clean:
 	rm -f $(VMLINUX) $(BPF_OBJ) $(BPF_SKEL) $(SHARED_LIB)
